@@ -1,6 +1,7 @@
 package com.example.batteryexpcollector
 
 import android.content.Context
+import android.content.SharedPreferences
 
 const val DEFAULT_INTERVAL_MS = 1000L
 const val DEFAULT_BRIGHTNESS_TARGET = 200
@@ -21,6 +22,18 @@ data class CollectionSessionState(
     val config: CollectionConfig
 )
 
+data class LatestSampleSnapshot(
+    val timestampMillis: Long = 0L,
+    val elapsedSec: Long = 0L,
+    val socInteger: Int? = null,
+    val batteryTempC: Float? = null,
+    val currentUa: Long? = null,
+    val brightness: Int? = null,
+    val screenOn: Boolean? = null,
+    val netType: String = "",
+    val currentFilePath: String = ""
+)
+
 object CollectionPrefs {
     private const val PREFS_NAME = "battery_collection_prefs"
 
@@ -35,7 +48,17 @@ object CollectionPrefs {
     private const val KEY_ENFORCE_BRIGHTNESS = "enforce_brightness"
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
 
-    private fun prefs(context: Context) =
+    private const val KEY_LATEST_TIMESTAMP_MILLIS = "latest_timestamp_millis"
+    private const val KEY_LATEST_ELAPSED_SEC = "latest_elapsed_sec"
+    private const val KEY_LATEST_SOC_INTEGER = "latest_soc_integer"
+    private const val KEY_LATEST_BATTERY_TEMP_C = "latest_battery_temp_c"
+    private const val KEY_LATEST_CURRENT_UA = "latest_current_ua"
+    private const val KEY_LATEST_BRIGHTNESS = "latest_brightness"
+    private const val KEY_LATEST_SCREEN_ON = "latest_screen_on"
+    private const val KEY_LATEST_NET_TYPE = "latest_net_type"
+    private const val KEY_LATEST_CURRENT_FILE_PATH = "latest_current_file_path"
+
+    private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun saveConfig(context: Context, config: CollectionConfig) {
@@ -106,6 +129,49 @@ object CollectionPrefs {
         )
     }
 
+    fun saveLatestSample(context: Context, snapshot: LatestSampleSnapshot) {
+        prefs(context).edit()
+            .putLong(KEY_LATEST_TIMESTAMP_MILLIS, snapshot.timestampMillis)
+            .putLong(KEY_LATEST_ELAPSED_SEC, snapshot.elapsedSec)
+            .putNullableInt(KEY_LATEST_SOC_INTEGER, snapshot.socInteger)
+            .putNullableFloat(KEY_LATEST_BATTERY_TEMP_C, snapshot.batteryTempC)
+            .putNullableLong(KEY_LATEST_CURRENT_UA, snapshot.currentUa)
+            .putNullableInt(KEY_LATEST_BRIGHTNESS, snapshot.brightness)
+            .putNullableBoolean(KEY_LATEST_SCREEN_ON, snapshot.screenOn)
+            .putString(KEY_LATEST_NET_TYPE, snapshot.netType)
+            .putString(KEY_LATEST_CURRENT_FILE_PATH, snapshot.currentFilePath)
+            .apply()
+    }
+
+    fun loadLatestSample(context: Context): LatestSampleSnapshot {
+        val pref = prefs(context)
+        return LatestSampleSnapshot(
+            timestampMillis = pref.getLong(KEY_LATEST_TIMESTAMP_MILLIS, 0L),
+            elapsedSec = pref.getLong(KEY_LATEST_ELAPSED_SEC, 0L),
+            socInteger = pref.getNullableInt(KEY_LATEST_SOC_INTEGER),
+            batteryTempC = pref.getNullableFloat(KEY_LATEST_BATTERY_TEMP_C),
+            currentUa = pref.getNullableLong(KEY_LATEST_CURRENT_UA),
+            brightness = pref.getNullableInt(KEY_LATEST_BRIGHTNESS),
+            screenOn = pref.getNullableBoolean(KEY_LATEST_SCREEN_ON),
+            netType = pref.getString(KEY_LATEST_NET_TYPE, "") ?: "",
+            currentFilePath = pref.getString(KEY_LATEST_CURRENT_FILE_PATH, "") ?: ""
+        )
+    }
+
+    fun clearLatestSample(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_LATEST_TIMESTAMP_MILLIS)
+            .remove(KEY_LATEST_ELAPSED_SEC)
+            .remove(KEY_LATEST_SOC_INTEGER)
+            .remove(KEY_LATEST_BATTERY_TEMP_C)
+            .remove(KEY_LATEST_CURRENT_UA)
+            .remove(KEY_LATEST_BRIGHTNESS)
+            .remove(KEY_LATEST_SCREEN_ON)
+            .remove(KEY_LATEST_NET_TYPE)
+            .remove(KEY_LATEST_CURRENT_FILE_PATH)
+            .apply()
+    }
+
     private fun normalizeConfig(config: CollectionConfig): CollectionConfig {
         return config.copy(
             intervalMs = config.intervalMs.coerceIn(250L, 10_000L),
@@ -113,4 +179,36 @@ object CollectionPrefs {
             brightnessTarget = config.brightnessTarget.coerceIn(0, 255)
         )
     }
+
+    private fun SharedPreferences.Editor.putNullableInt(key: String, value: Int?): SharedPreferences.Editor {
+        if (value == null) remove(key) else putInt(key, value)
+        return this
+    }
+
+    private fun SharedPreferences.Editor.putNullableLong(key: String, value: Long?): SharedPreferences.Editor {
+        if (value == null) remove(key) else putLong(key, value)
+        return this
+    }
+
+    private fun SharedPreferences.Editor.putNullableFloat(key: String, value: Float?): SharedPreferences.Editor {
+        if (value == null) remove(key) else putFloat(key, value)
+        return this
+    }
+
+    private fun SharedPreferences.Editor.putNullableBoolean(key: String, value: Boolean?): SharedPreferences.Editor {
+        if (value == null) remove(key) else putBoolean(key, value)
+        return this
+    }
+
+    private fun SharedPreferences.getNullableInt(key: String): Int? =
+        if (contains(key)) getInt(key, 0) else null
+
+    private fun SharedPreferences.getNullableLong(key: String): Long? =
+        if (contains(key)) getLong(key, 0L) else null
+
+    private fun SharedPreferences.getNullableFloat(key: String): Float? =
+        if (contains(key)) getFloat(key, 0f) else null
+
+    private fun SharedPreferences.getNullableBoolean(key: String): Boolean? =
+        if (contains(key)) getBoolean(key, false) else null
 }

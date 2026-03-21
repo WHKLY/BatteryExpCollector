@@ -61,6 +61,10 @@ class BatteryCollectService : Service() {
     private var currentConfig: CollectionConfig = CollectionConfig()
     private var pendingEventMarker: String? = null
 
+    private var sampleCount: Long = 0L
+    private var screenOffObserved: Boolean = false
+    private var chargingObserved: Boolean = false
+
     private var batteryReceiver: BroadcastReceiver? = null
     private var batteryManager: BatteryManager? = null
     private var connectivityManager: ConnectivityManager? = null
@@ -209,6 +213,11 @@ class BatteryCollectService : Service() {
             startedAtMillis = startTimeMillis,
             config = currentConfig
         )
+        CollectionPrefs.clearLatestSample(this)
+
+        sampleCount = 0L
+        screenOffObserved = false
+        chargingObserved = false
 
         ensureBatteryReceiverRegistered()
         initializeTrafficBaseline()
@@ -245,6 +254,10 @@ class BatteryCollectService : Service() {
         openWriter(currentFile!!, append = true)
         writeMetadataAndHeaderIfNeeded(currentFile!!, currentConfig, startTimeMillis)
 
+        sampleCount = countExistingDataRows(currentFile!!)
+        screenOffObserved = false
+        chargingObserved = false
+
         ensureBatteryReceiverRegistered()
         initializeTrafficBaseline()
 
@@ -263,7 +276,21 @@ class BatteryCollectService : Service() {
     }
 
     private fun stopCurrentSessionAndSelf(clearSession: Boolean = true) {
-        val lastPath = currentFile?.absolutePath.orEmpty()
+        val fileRef = currentFile
+        val lastPath = fileRef?.absolutePath.orEmpty()
+        val stopTimeMillis = System.currentTimeMillis()
+
+        if (fileRef != null) {
+            writeSessionSummaryFile(
+                csvFile = fileRef,
+                config = currentConfig,
+                startedAtMillis = startTimeMillis,
+                endedAtMillis = stopTimeMillis,
+                sampleCount = sampleCount,
+                screenOffObserved = screenOffObserved,
+                chargingObserved = chargingObserved
+            )
+        }
 
         stopSamplingLoop()
         closeCsvWriter()
@@ -357,7 +384,7 @@ class BatteryCollectService : Service() {
         return try {
             val value = batteryManager?.getLongProperty(propertyId) ?: return null
             if (value == Long.MIN_VALUE) null else value
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -429,7 +456,37 @@ class BatteryCollectService : Service() {
         ).joinToString(",")
 
         writeLine(dataLine)
+
+        sampleCount += 1
+        if (screenOnSnapshot.value == false) {
+            screenOffObserved = true
+        }
+        if (isChargingOrPlugged()) {
+            chargingObserved = true
+        }
+
+        CollectionPrefs.saveLatestSample(
+            this,
+            LatestSampleSnapshot(
+                timestampMillis = now,
+                elapsedSec = (now - startTimeMillis) / 1000L,
+                socInteger = batteryLevel,
+                batteryTempC = batteryTemperatureC,
+                currentUa = batteryCurrentUa,
+                brightness = brightnessSnapshot.value,
+                screenOn = screenOnSnapshot.value,
+                netType = networkSnapshot.netType,
+                currentFilePath = currentFile?.absolutePath.orEmpty()
+            )
+        )
+
         Log.d(tag, dataLine)
+    }
+
+    private fun isChargingOrPlugged(): Boolean {
+        return batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+                batteryStatus == BatteryManager.BATTERY_STATUS_FULL ||
+                (batteryPlugged ?: 0) > 0
     }
 
     private fun readBrightnessSnapshot(): IntSnapshot {
@@ -438,7 +495,7 @@ class BatteryCollectService : Service() {
                 value = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS),
                 readOk = true
             )
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             IntSnapshot(value = null, readOk = false)
         }
     }
@@ -471,7 +528,7 @@ class BatteryCollectService : Service() {
                 Settings.System.SCREEN_BRIGHTNESS
             )
             after == targetBrightness
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -486,7 +543,7 @@ class BatteryCollectService : Service() {
                 powerManager.isScreenOn
             }
             BooleanSnapshot(value = value, readOk = true)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             BooleanSnapshot(value = null, readOk = false)
         }
     }
@@ -561,7 +618,7 @@ class BatteryCollectService : Service() {
                     readOk = true
                 )
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             NetworkSnapshot(
                 netType = netType,
                 txBytesTotal = null,
@@ -585,7 +642,7 @@ class BatteryCollectService : Service() {
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "Bluetooth"
                 else -> "Other"
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             "Error"
         }
     }
@@ -680,6 +737,57 @@ class BatteryCollectService : Service() {
         }
     }
 
+    private fun writeSessionSummaryFile(
+        csvFile: File,
+        config: CollectionConfig,
+        startedAtMillis: Long,
+        endedAtMillis: Long,
+        sampleCount: Long,
+        screenOffObserved: Boolean,
+        chargingObserved: Boolean
+    ) {
+        try {
+            val summaryFile = File(
+                csvFile.parentFile,
+                "${csvFile.nameWithoutExtension}.summary.txt"
+            )
+
+            val summaryText = buildString {
+                appendLine("BatteryExpCollector Session Summary")
+                appendLine("csv_file=${csvFile.absolutePath}")
+                appendLine("summary_file=${summaryFile.absolutePath}")
+                appendLine("session_start=${isoTime(startedAtMillis)}")
+                appendLine("session_end=${isoTime(endedAtMillis)}")
+                appendLine("duration_seconds=${((endedAtMillis - startedAtMillis).coerceAtLeast(0L)) / 1000L}")
+                appendLine("sample_count=$sampleCount")
+                appendLine("target_brightness=${config.brightnessTarget}")
+                appendLine("enforce_brightness=${config.enforceBrightness}")
+                appendLine("keep_screen_on=${config.keepScreenOn}")
+                appendLine("screen_off_observed=${if (screenOffObserved) 1 else 0}")
+                appendLine("charging_observed=${if (chargingObserved) 1 else 0}")
+                appendLine("experiment_note=${config.experimentNote}")
+            }
+
+            summaryFile.writeText(summaryText)
+        } catch (e: Exception) {
+            Log.e(tag, "写入会话摘要失败", e)
+        }
+    }
+
+    private fun countExistingDataRows(file: File): Long {
+        return try {
+            file.useLines { lines ->
+                lines.count { line ->
+                    line.isNotBlank() &&
+                            !line.startsWith("#") &&
+                            !line.startsWith("Timestamp,")
+                }.toLong()
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
     private fun updateNotification(contentText: String) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(notificationId, buildNotification(contentText))
@@ -728,7 +836,7 @@ class BatteryCollectService : Service() {
             }
 
             "${packageInfo.versionName ?: "unknown"} (${packageInfo.longVersionCode})"
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             "unknown"
         }
     }
