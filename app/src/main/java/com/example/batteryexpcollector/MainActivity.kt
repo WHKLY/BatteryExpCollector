@@ -17,6 +17,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,9 +38,11 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,6 +74,9 @@ class MainActivity : ComponentActivity() {
     private var eventMarkerInput by mutableStateOf("")
 
     private var preflightChecks by mutableStateOf<List<PreflightCheckItem>>(emptyList())
+
+    private var deviceStatusExpanded by mutableStateOf(false)
+    private var preflightExpanded by mutableStateOf(true)
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val uiRefreshRunnable = object : Runnable {
@@ -124,63 +130,82 @@ class MainActivity : ComponentActivity() {
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = if (isCollecting) "状态：采集中" else "状态：空闲",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(text = "设备：${Build.MANUFACTURER} ${Build.MODEL}")
-                                Text(text = "通知权限：${if (notificationPermissionGranted) "已授权" else "未授权"}")
-                                Text(text = "修改系统设置权限：${if (writeSettingsGranted) "已授权" else "未授权"}")
-                                Text(
-                                    text = "数据目录：${
-                                        getExternalFilesDir(null)?.resolve("BatteryExpData")?.absolutePath
-                                            ?: "不可用"
-                                    }"
+                                CollapsibleCardHeader(
+                                    title = "设备状态",
+                                    expanded = deviceStatusExpanded,
+                                    summary = buildDeviceStatusSummary(),
+                                    onToggle = { deviceStatusExpanded = !deviceStatusExpanded }
                                 )
 
-                                if (currentFilePath.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(text = "当前文件：$currentFilePath")
-                                } else if (lastFilePath.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(text = "最近文件：$lastFilePath")
+                                AnimatedVisibility(visible = deviceStatusExpanded) {
+                                    Column {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = if (isCollecting) "状态：采集中" else "状态：空闲",
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(text = "设备：${Build.MANUFACTURER} ${Build.MODEL}")
+                                        Text(text = "通知权限：${if (notificationPermissionGranted) "已授权" else "未授权"}")
+                                        Text(text = "修改系统设置权限：${if (writeSettingsGranted) "已授权" else "未授权"}")
+                                        Text(
+                                            text = "数据目录：${
+                                                getExternalFilesDir(null)?.resolve("BatteryExpData")?.absolutePath
+                                                    ?: "不可用"
+                                            }"
+                                        )
+
+                                        if (currentFilePath.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(text = "当前文件：$currentFilePath")
+                                        } else if (lastFilePath.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(text = "最近文件：$lastFilePath")
+                                        }
+                                    }
                                 }
                             }
                         }
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "开始前自检",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-
                                 val blockCount = preflightChecks.count { it.level == CheckLevel.BLOCK }
                                 val warnCount = preflightChecks.count { it.level == CheckLevel.WARN }
-                                Text(text = "阻止项：$blockCount，警告项：$warnCount")
 
-                                Spacer(modifier = Modifier.height(8.dp))
-                                preflightChecks.forEach { item ->
-                                    val color = when (item.level) {
-                                        CheckLevel.PASS -> MaterialTheme.colorScheme.onSurface
-                                        CheckLevel.WARN -> MaterialTheme.colorScheme.tertiary
-                                        CheckLevel.BLOCK -> MaterialTheme.colorScheme.error
+                                CollapsibleCardHeader(
+                                    title = "开始前自检",
+                                    expanded = preflightExpanded,
+                                    summary = "阻止项：$blockCount，警告项：$warnCount",
+                                    onToggle = { preflightExpanded = !preflightExpanded }
+                                )
+
+                                AnimatedVisibility(visible = preflightExpanded) {
+                                    Column {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(text = "阻止项：$blockCount，警告项：$warnCount")
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        preflightChecks.forEach { item ->
+                                            val color = when (item.level) {
+                                                CheckLevel.PASS -> MaterialTheme.colorScheme.onSurface
+                                                CheckLevel.WARN -> MaterialTheme.colorScheme.tertiary
+                                                CheckLevel.BLOCK -> MaterialTheme.colorScheme.error
+                                            }
+                                            Text(
+                                                text = "${item.level.label} ${item.title}：${item.detail}",
+                                                color = color
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = { refreshPreflightChecks() },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("刷新自检")
+                                        }
                                     }
-                                    Text(
-                                        text = "${item.level.label} ${item.title}：${item.detail}",
-                                        color = color
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Button(
-                                    onClick = { refreshPreflightChecks() },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("刷新自检")
                                 }
                             }
                         }
@@ -378,6 +403,9 @@ class MainActivity : ComponentActivity() {
                                                     "存在阻止项，请先处理自检面板中的问题",
                                                     Toast.LENGTH_LONG
                                                 ).show()
+                                                if (!preflightExpanded) {
+                                                    preflightExpanded = true
+                                                }
                                                 return@Button
                                             }
 
@@ -680,6 +708,44 @@ class MainActivity : ComponentActivity() {
 
     private fun formatTimestamp(timeMillis: Long): String {
         return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timeMillis))
+    }
+
+    private fun buildDeviceStatusSummary(): String {
+        val statusText = if (isCollecting) "采集中" else "空闲"
+        val fileName = when {
+            currentFilePath.isNotBlank() -> File(currentFilePath).name
+            lastFilePath.isNotBlank() -> File(lastFilePath).name
+            else -> "无"
+        }
+        return "状态：$statusText，文件：$fileName"
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun CollapsibleCardHeader(
+    title: String,
+    expanded: Boolean,
+    summary: String,
+    onToggle: () -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium
+            )
+            TextButton(onClick = onToggle) {
+                Text(if (expanded) "收起" else "展开")
+            }
+        }
+        Text(
+            text = summary,
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
