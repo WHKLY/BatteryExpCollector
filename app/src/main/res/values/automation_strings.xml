@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="automation_accessibility_description">BatteryExpCollector automation accessibility service</string>
+    <string name="automation_accessibility_summary">用于本地实验阶段切换与前台应用控制</string>
+</resources>

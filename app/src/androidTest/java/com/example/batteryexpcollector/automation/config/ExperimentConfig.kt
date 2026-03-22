@@ -34,7 +34,8 @@ data class ActionConfig(
     val type: String,
     val durationMs: Long = 0L,
     val markerName: String = "",
-    val packageName: String = ""
+    val packageName: String = "",
+    val componentName: String = ""
 )
 
 object ExperimentConfigLoader {
@@ -90,7 +91,8 @@ object ExperimentConfigLoader {
                 type = actionObj.getString("type"),
                 durationMs = actionObj.optLong("durationMs", 0L),
                 markerName = actionObj.optString("markerName", ""),
-                packageName = actionObj.optString("packageName", "")
+                packageName = actionObj.optString("packageName", ""),
+                componentName = actionObj.optString("componentName", "")
             )
         }
         return actions

@@ -68,8 +68,21 @@ class PhaseExecutor(
                 require(action.packageName.isNotBlank()) { "launch_app requires packageName" }
                 AppLaunchActions.launchPackage(
                     targetContext = targetContext,
+                    packageName = action.packageName,
+                    logger = logger
+                )
+            }
+
+            "launch_component" -> {
+                require(action.packageName.isNotBlank()) { "launch_component requires packageName" }
+                require(action.componentName.isNotBlank()) {
+                    "launch_component requires componentName"
+                }
+                AppLaunchActions.launchComponent(
+                    targetContext = targetContext,
                     device = device,
                     packageName = action.packageName,
+                    componentName = action.componentName,
                     logger = logger
                 )
             }
