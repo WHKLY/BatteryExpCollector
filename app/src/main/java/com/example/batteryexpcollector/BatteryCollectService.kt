@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.TrafficStats
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -21,8 +22,6 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
-import java.io.File
-import java.io.FileWriter
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -54,8 +53,9 @@ class BatteryCollectService : Service() {
     private var sampleThread: HandlerThread? = null
     private var sampleHandler: Handler? = null
 
-    private var csvWriter: FileWriter? = null
-    private var currentFile: File? = null
+    private var currentCsvUri: Uri? = null
+    private var currentCsvDisplayName: String = ""
+    private var currentCsvLogicalPath: String = ""
     private var startTimeMillis: Long = 0L
     private var isCollectingSession = false
     private var currentConfig: CollectionConfig = CollectionConfig()
@@ -143,7 +143,7 @@ class BatteryCollectService : Service() {
                         }
                         if (isCollectingSession) {
                             pendingEventMarker = marker
-                            updateNotification("采集中：${currentFile?.name ?: "未知文件"} | 已收到标记")
+                            updateNotification("采集中：${currentCsvDisplayName.ifBlank { "未知文件" }} | 已收到标记")
                         }
                     }
                 }
@@ -166,7 +166,6 @@ class BatteryCollectService : Service() {
 
     override fun onDestroy() {
         stopSamplingLoop()
-        closeCsvWriter()
         unregisterBatteryReceiverIfNeeded()
 
         sampleThread?.quitSafely()
@@ -191,7 +190,6 @@ class BatteryCollectService : Service() {
 
     private fun startNewSession(config: CollectionConfig) {
         stopSamplingLoop()
-        closeCsvWriter()
 
         currentConfig = CollectionPrefs.loadConfig(this).copy(
             intervalMs = config.intervalMs.coerceIn(250L, 10_000L),
@@ -202,14 +200,17 @@ class BatteryCollectService : Service() {
         )
 
         startTimeMillis = System.currentTimeMillis()
-        currentFile = createSessionFile(currentConfig)
+        val storedFile = createSessionOutput(currentConfig)
+        currentCsvUri = storedFile.uri
+        currentCsvDisplayName = storedFile.displayName
+        currentCsvLogicalPath = storedFile.logicalPath
 
-        openWriter(currentFile!!, append = true)
-        writeMetadataAndHeaderIfNeeded(currentFile!!, currentConfig, startTimeMillis)
+        writeMetadataAndHeaderIfNeeded(currentCsvUri!!, currentConfig, startTimeMillis)
 
         CollectionPrefs.saveActiveSession(
             context = this,
-            filePath = currentFile!!.absolutePath,
+            fileUri = currentCsvUri!!.toString(),
+            fileDisplayPath = currentCsvLogicalPath,
             startedAtMillis = startTimeMillis,
             config = currentConfig
         )
@@ -231,13 +232,13 @@ class BatteryCollectService : Service() {
         pendingEventMarker = null
         isCollectingSession = true
 
-        updateNotification("采集中：${currentFile!!.name}")
+        updateNotification("采集中：$currentCsvDisplayName")
         startSamplingLoop()
     }
 
     private fun restoreSessionIfNeeded(): Boolean {
         val session = CollectionPrefs.loadSessionState(this)
-        if (!session.isCollecting || session.currentFilePath.isBlank()) {
+        if (!session.isCollecting || session.currentFileUri.isBlank()) {
             return false
         }
 
@@ -248,13 +249,13 @@ class BatteryCollectService : Service() {
             System.currentTimeMillis()
         }
 
-        currentFile = File(session.currentFilePath)
-        currentFile?.parentFile?.mkdirs()
+        currentCsvUri = Uri.parse(session.currentFileUri)
+        currentCsvLogicalPath = session.currentFilePath.ifBlank { session.currentFileUri }
+        currentCsvDisplayName = currentCsvLogicalPath.substringAfterLast('/')
 
-        openWriter(currentFile!!, append = true)
-        writeMetadataAndHeaderIfNeeded(currentFile!!, currentConfig, startTimeMillis)
+        writeMetadataAndHeaderIfNeeded(currentCsvUri!!, currentConfig, startTimeMillis)
 
-        sampleCount = countExistingDataRows(currentFile!!)
+        sampleCount = countExistingDataRows(currentCsvUri!!)
         screenOffObserved = false
         chargingObserved = false
 
@@ -270,19 +271,22 @@ class BatteryCollectService : Service() {
         pendingEventMarker = null
         isCollectingSession = true
 
-        updateNotification("恢复采集中：${currentFile!!.name}")
+        updateNotification("恢复采集中：$currentCsvDisplayName")
         startSamplingLoop()
         return true
     }
 
     private fun stopCurrentSessionAndSelf(clearSession: Boolean = true) {
-        val fileRef = currentFile
-        val lastPath = fileRef?.absolutePath.orEmpty()
+        val csvUri = currentCsvUri
+        val csvDisplayName = currentCsvDisplayName
+        val csvLogicalPath = currentCsvLogicalPath
         val stopTimeMillis = System.currentTimeMillis()
 
-        if (fileRef != null) {
+        if (csvUri != null) {
             writeSessionSummaryFile(
-                csvFile = fileRef,
+                csvUri = csvUri,
+                csvDisplayName = csvDisplayName,
+                csvLogicalPath = csvLogicalPath,
                 config = currentConfig,
                 startedAtMillis = startTimeMillis,
                 endedAtMillis = stopTimeMillis,
@@ -293,14 +297,15 @@ class BatteryCollectService : Service() {
         }
 
         stopSamplingLoop()
-        closeCsvWriter()
 
         isCollectingSession = false
-        currentFile = null
         pendingEventMarker = null
+        currentCsvUri = null
+        currentCsvDisplayName = ""
+        currentCsvLogicalPath = ""
 
         if (clearSession) {
-            CollectionPrefs.clearActiveSession(this, lastPath)
+            CollectionPrefs.clearActiveSession(this, csvLogicalPath)
         }
 
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -476,7 +481,7 @@ class BatteryCollectService : Service() {
                 brightness = brightnessSnapshot.value,
                 screenOn = screenOnSnapshot.value,
                 netType = networkSnapshot.netType,
-                currentFilePath = currentFile?.absolutePath.orEmpty()
+                currentFilePath = currentCsvLogicalPath
             )
         )
 
@@ -647,12 +652,7 @@ class BatteryCollectService : Service() {
         }
     }
 
-    private fun createSessionFile(config: CollectionConfig): File {
-        val dir = File(getExternalFilesDir(null), "BatteryExpData")
-        if (!dir.exists()) {
-            dir.mkdirs()
-        }
-
+    private fun createSessionOutput(config: CollectionConfig): SharedResultsStore.StoredTextFile {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val notePart = sanitizeFilePart(config.experimentNote).takeIf { it.isNotBlank() }
         val modelPart = sanitizeFilePart(Build.MODEL).ifBlank { "device" }
@@ -668,30 +668,19 @@ class BatteryCollectService : Service() {
             append(".csv")
         }
 
-        return File(dir, fileName)
-    }
-
-    private fun openWriter(file: File, append: Boolean) {
-        closeCsvWriter()
-        csvWriter = FileWriter(file, append)
-    }
-
-    private fun closeCsvWriter() {
-        try {
-            csvWriter?.flush()
-            csvWriter?.close()
-        } catch (_: Exception) {
-        } finally {
-            csvWriter = null
-        }
+        return SharedResultsStore.createTextFile(
+            context = this,
+            displayName = fileName,
+            mimeType = "text/csv"
+        )
     }
 
     private fun writeMetadataAndHeaderIfNeeded(
-        file: File,
+        uri: Uri,
         config: CollectionConfig,
         sessionStartMillis: Long
     ) {
-        if (file.length() > 0L) {
+        if (SharedResultsStore.getFileSize(this, uri) > 0L) {
             return
         }
 
@@ -711,12 +700,14 @@ class BatteryCollectService : Service() {
             "# target_brightness=${config.brightnessTarget}",
             "# enforce_brightness=${config.enforceBrightness}",
             "# keep_screen_on=${config.keepScreenOn}",
-            "# experiment_note=${config.experimentNote}"
+            "# experiment_note=${config.experimentNote}",
+            "# results_directory=${SharedResultsStore.RESULTS_DIRECTORY_LABEL}"
         )
 
-        metadataLines.forEach { writeLine(it) }
+        metadataLines.forEach { writeLineInternal(uri, it) }
 
-        writeLine(
+        writeLineInternal(
+            uri,
             "Timestamp,ElapsedTime_S," +
                     "SOC_Integer,BatteryPct_Float,Voltage_mV,Current_uA,BatteryTemp_C,ChargeCounter_uAh," +
                     "BatteryStatus,PluggedType,BatteryHealth,BatteryPresent,BatteryScale," +
@@ -729,16 +720,22 @@ class BatteryCollectService : Service() {
     }
 
     private fun writeLine(line: String) {
+        val uri = currentCsvUri ?: return
+        writeLineInternal(uri, line)
+    }
+
+    private fun writeLineInternal(uri: Uri, line: String) {
         try {
-            csvWriter?.append(line)?.append("\n")
-            csvWriter?.flush()
+            SharedResultsStore.appendText(this, uri, "$line\n")
         } catch (e: Exception) {
             Log.e(tag, "CSV 写入失败", e)
         }
     }
 
     private fun writeSessionSummaryFile(
-        csvFile: File,
+        csvUri: Uri,
+        csvDisplayName: String,
+        csvLogicalPath: String,
         config: CollectionConfig,
         startedAtMillis: Long,
         endedAtMillis: Long,
@@ -747,15 +744,20 @@ class BatteryCollectService : Service() {
         chargingObserved: Boolean
     ) {
         try {
-            val summaryFile = File(
-                csvFile.parentFile,
-                "${csvFile.nameWithoutExtension}.summary.txt"
+            val summaryDisplayName =
+                csvDisplayName.removeSuffix(".csv") + ".summary.txt"
+
+            val summaryFile = SharedResultsStore.createTextFile(
+                context = this,
+                displayName = summaryDisplayName,
+                mimeType = "text/plain"
             )
 
             val summaryText = buildString {
                 appendLine("BatteryExpCollector Session Summary")
-                appendLine("csv_file=${csvFile.absolutePath}")
-                appendLine("summary_file=${summaryFile.absolutePath}")
+                appendLine("csv_file=$csvLogicalPath")
+                appendLine("csv_uri=$csvUri")
+                appendLine("summary_file=${summaryFile.logicalPath}")
                 appendLine("session_start=${isoTime(startedAtMillis)}")
                 appendLine("session_end=${isoTime(endedAtMillis)}")
                 appendLine("duration_seconds=${((endedAtMillis - startedAtMillis).coerceAtLeast(0L)) / 1000L}")
@@ -766,23 +768,22 @@ class BatteryCollectService : Service() {
                 appendLine("screen_off_observed=${if (screenOffObserved) 1 else 0}")
                 appendLine("charging_observed=${if (chargingObserved) 1 else 0}")
                 appendLine("experiment_note=${config.experimentNote}")
+                appendLine("results_directory=${SharedResultsStore.RESULTS_DIRECTORY_LABEL}")
             }
 
-            summaryFile.writeText(summaryText)
+            SharedResultsStore.overwriteText(this, summaryFile.uri, summaryText)
         } catch (e: Exception) {
             Log.e(tag, "写入会话摘要失败", e)
         }
     }
 
-    private fun countExistingDataRows(file: File): Long {
+    private fun countExistingDataRows(uri: Uri): Long {
         return try {
-            file.useLines { lines ->
-                lines.count { line ->
-                    line.isNotBlank() &&
-                            !line.startsWith("#") &&
-                            !line.startsWith("Timestamp,")
-                }.toLong()
-            }
+            SharedResultsStore.readLines(this, uri).count { line ->
+                line.isNotBlank() &&
+                        !line.startsWith("#") &&
+                        !line.startsWith("Timestamp,")
+            }.toLong()
         } catch (_: Exception) {
             0L
         }

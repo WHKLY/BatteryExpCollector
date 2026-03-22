@@ -19,7 +19,8 @@ data class CollectionSessionState(
     val currentFilePath: String,
     val lastFilePath: String,
     val startedAtMillis: Long,
-    val config: CollectionConfig
+    val config: CollectionConfig,
+    val currentFileUri: String
 )
 
 data class LatestSampleSnapshot(
@@ -39,6 +40,7 @@ object CollectionPrefs {
 
     private const val KEY_IS_COLLECTING = "is_collecting"
     private const val KEY_CURRENT_FILE_PATH = "current_file_path"
+    private const val KEY_CURRENT_FILE_URI = "current_file_uri"
     private const val KEY_LAST_FILE_PATH = "last_file_path"
     private const val KEY_STARTED_AT_MILLIS = "started_at_millis"
 
@@ -87,7 +89,8 @@ object CollectionPrefs {
 
     fun saveActiveSession(
         context: Context,
-        filePath: String,
+        fileUri: String,
+        fileDisplayPath: String,
         startedAtMillis: Long,
         config: CollectionConfig
     ) {
@@ -96,8 +99,9 @@ object CollectionPrefs {
 
         prefs(context).edit()
             .putBoolean(KEY_IS_COLLECTING, true)
-            .putString(KEY_CURRENT_FILE_PATH, filePath)
-            .putString(KEY_LAST_FILE_PATH, filePath)
+            .putString(KEY_CURRENT_FILE_URI, fileUri)
+            .putString(KEY_CURRENT_FILE_PATH, fileDisplayPath)
+            .putString(KEY_LAST_FILE_PATH, fileDisplayPath)
             .putLong(KEY_STARTED_AT_MILLIS, startedAtMillis)
             .apply()
     }
@@ -112,6 +116,7 @@ object CollectionPrefs {
 
         pref.edit()
             .putBoolean(KEY_IS_COLLECTING, false)
+            .remove(KEY_CURRENT_FILE_URI)
             .putString(KEY_CURRENT_FILE_PATH, "")
             .putString(KEY_LAST_FILE_PATH, finalLastPath)
             .putLong(KEY_STARTED_AT_MILLIS, 0L)
@@ -125,7 +130,8 @@ object CollectionPrefs {
             currentFilePath = pref.getString(KEY_CURRENT_FILE_PATH, "") ?: "",
             lastFilePath = pref.getString(KEY_LAST_FILE_PATH, "") ?: "",
             startedAtMillis = pref.getLong(KEY_STARTED_AT_MILLIS, 0L),
-            config = loadConfig(context)
+            config = loadConfig(context),
+            currentFileUri = pref.getString(KEY_CURRENT_FILE_URI, "") ?: ""
         )
     }
 
