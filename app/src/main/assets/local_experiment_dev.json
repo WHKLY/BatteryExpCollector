@@ -1,0 +1,39 @@
+{
+  "experimentId": "local_dev_gallery",
+  "note": "local foreground experiment runner with alarm-driven phases",
+  "delayStartSec": 5,
+  "collector": {
+    "intervalMs": 1000,
+    "experimentNote": "local_dev_gallery",
+    "brightnessTarget": 200,
+    "enforceBrightness": true,
+    "keepScreenOn": true
+  },
+  "phases": [
+    {
+      "name": "phase_1_idle",
+      "durationSec": 10,
+      "startMarker": "phase_1_start",
+      "endMarker": "phase_1_end",
+      "actions": [
+        { "type": "home" },
+        { "type": "wait", "durationMs": 3000 },
+        { "type": "marker", "markerName": "idle_midpoint" }
+      ]
+    },
+    {
+      "name": "phase_2_gallery_homepage",
+      "durationSec": 12,
+      "startMarker": "phase_2_start",
+      "endMarker": "phase_2_end",
+      "actions": [
+        {
+          "type": "launch_home_icon",
+          "label": "相册",
+          "expectedPackage": "com.miui.gallery"
+        },
+        { "type": "marker", "markerName": "gallery_homepage_triggered" }
+      ]
+    }
+  ]
+}

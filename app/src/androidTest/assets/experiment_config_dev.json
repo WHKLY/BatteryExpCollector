@@ -1,0 +1,42 @@
+{
+  "experimentId": "dev_phase_skeleton",
+  "note": "gallery component launch test",
+  "delayStartSec": 5,
+  "targetSocPercent": 80,
+  "enforceSocCheck": false,
+  "collector": {
+    "intervalMs": 1000,
+    "experimentNote": "dev_gallery_component",
+    "brightnessTarget": 200,
+    "enforceBrightness": true,
+    "keepScreenOn": true
+  },
+  "phases": [
+    {
+      "name": "phase_1_idle",
+      "durationSec": 10,
+      "startMarker": "phase_1_start",
+      "endMarker": "phase_1_end",
+      "actions": [
+        { "type": "press_home" },
+        { "type": "wait", "durationMs": 3000 },
+        { "type": "marker", "markerName": "idle_midpoint" }
+      ]
+    },
+    {
+      "name": "phase_2_gallery_homepage",
+      "durationSec": 12,
+      "startMarker": "phase_2_start",
+      "endMarker": "phase_2_end",
+      "actions": [
+        {
+          "type": "launch_component",
+          "packageName": "com.miui.gallery",
+          "componentName": ".activity.HomePageActivity"
+        },
+        { "type": "wait", "durationMs": 5000 },
+        { "type": "marker", "markerName": "gallery_homepage_visible" }
+      ]
+    }
+  ]
+}
