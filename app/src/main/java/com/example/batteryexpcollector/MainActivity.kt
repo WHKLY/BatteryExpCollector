@@ -39,11 +39,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,17 +98,9 @@ class MainActivity : ComponentActivity() {
                 onResult = { granted ->
                     notificationPermissionGranted = granted || hasNotificationPermission()
                     if (notificationPermissionGranted) {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "通知权限已获取，可以开始采集",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(this@MainActivity, "通知权限已获取，可以开始采集", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "通知权限未授权，前台服务通知可能无法正常显示",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        Toast.makeText(this@MainActivity, "通知权限未授权，前台服务通知可能无法正常显示", Toast.LENGTH_LONG).show()
                     }
                     refreshUiStateFromPrefs()
                 }
@@ -148,12 +140,7 @@ class MainActivity : ComponentActivity() {
                                         Text(text = "设备：${Build.MANUFACTURER} ${Build.MODEL}")
                                         Text(text = "通知权限：${if (notificationPermissionGranted) "已授权" else "未授权"}")
                                         Text(text = "修改系统设置权限：${if (writeSettingsGranted) "已授权" else "未授权"}")
-                                        Text(
-                                            text = "数据目录：${
-                                                getExternalFilesDir(null)?.resolve("BatteryExpData")?.absolutePath
-                                                    ?: "不可用"
-                                            }"
-                                        )
+                                        Text(text = "数据目录：${SharedResultsStore.RESULTS_DIRECTORY_LABEL}")
 
                                         if (currentFilePath.isNotBlank()) {
                                             Spacer(modifier = Modifier.height(8.dp))
@@ -191,10 +178,7 @@ class MainActivity : ComponentActivity() {
                                                 CheckLevel.WARN -> MaterialTheme.colorScheme.tertiary
                                                 CheckLevel.BLOCK -> MaterialTheme.colorScheme.error
                                             }
-                                            Text(
-                                                text = "${item.level.label} ${item.title}：${item.detail}",
-                                                color = color
-                                            )
+                                            Text(text = "${item.level.label} ${item.title}：${item.detail}", color = color)
                                             Spacer(modifier = Modifier.height(4.dp))
                                         }
 
@@ -212,10 +196,7 @@ class MainActivity : ComponentActivity() {
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "运行中状态面板",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
+                                Text(text = "运行中状态面板", style = MaterialTheme.typography.titleMedium)
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 if (latestSample.timestampMillis > 0L) {
@@ -223,34 +204,20 @@ class MainActivity : ComponentActivity() {
                                     Text(text = "已运行：${latestSample.elapsedSec} s")
                                     Text(text = "SOC：${latestSample.socInteger?.toString() ?: "N/A"}")
                                     Text(
-                                        text = "电池温度：${
-                                            latestSample.batteryTempC?.let {
-                                                String.format(Locale.US, "%.2f °C", it)
-                                            } ?: "N/A"
-                                        }"
+                                        text = "电池温度：${latestSample.batteryTempC?.let { String.format(Locale.US, "%.2f °C", it) } ?: "N/A"}"
                                     )
                                     Text(text = "电流：${latestSample.currentUa?.toString() ?: "N/A"} uA")
                                     Text(text = "亮度：${latestSample.brightness?.toString() ?: "N/A"}")
                                     Text(
-                                        text = "屏幕状态：${
-                                            when (latestSample.screenOn) {
-                                                true -> "亮屏"
-                                                false -> "熄屏"
-                                                null -> "N/A"
-                                            }
-                                        }"
+                                        text = "屏幕状态：${when (latestSample.screenOn) {
+                                            true -> "亮屏"
+                                            false -> "熄屏"
+                                            null -> "N/A"
+                                        }}"
                                     )
+                                    Text(text = "网络类型：${latestSample.netType.ifBlank { "N/A" }}")
                                     Text(
-                                        text = "网络类型：${
-                                            latestSample.netType.ifBlank { "N/A" }
-                                        }"
-                                    )
-                                    Text(
-                                        text = "采样文件：${
-                                            latestSample.currentFilePath.takeIf { it.isNotBlank() }?.let {
-                                                File(it).name
-                                            } ?: "N/A"
-                                        }"
+                                        text = "采样文件：${latestSample.currentFilePath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "N/A"}"
                                     )
                                 } else {
                                     Text(text = "暂无采样快照")
@@ -260,10 +227,7 @@ class MainActivity : ComponentActivity() {
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "实验配置",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
+                                Text(text = "实验配置", style = MaterialTheme.typography.titleMedium)
 
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(text = "采样间隔")
@@ -286,9 +250,7 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 OutlinedTextField(
                                     value = noteInput,
-                                    onValueChange = {
-                                        noteInput = it
-                                    },
+                                    onValueChange = { noteInput = it },
                                     modifier = Modifier.fillMaxWidth(),
                                     label = { Text("实验备注") },
                                     placeholder = { Text("例如：25C_run01") },
@@ -325,6 +287,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
 
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -346,10 +309,7 @@ class MainActivity : ComponentActivity() {
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "控制",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
+                                Text(text = "控制", style = MaterialTheme.typography.titleMedium)
 
                                 Spacer(modifier = Modifier.height(12.dp))
                                 if (!writeSettingsGranted) {
@@ -362,15 +322,9 @@ class MainActivity : ComponentActivity() {
                                     Spacer(modifier = Modifier.height(8.dp))
                                 }
 
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                    !notificationPermissionGranted
-                                ) {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationPermissionGranted) {
                                     Button(
-                                        onClick = {
-                                            notificationPermissionLauncher.launch(
-                                                Manifest.permission.POST_NOTIFICATIONS
-                                            )
-                                        },
+                                        onClick = { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text("申请通知权限")
@@ -384,9 +338,7 @@ class MainActivity : ComponentActivity() {
                                             stopCollection()
                                         } else {
                                             val ready = ensurePermissionsBeforeStart {
-                                                notificationPermissionLauncher.launch(
-                                                    Manifest.permission.POST_NOTIFICATIONS
-                                                )
+                                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                             }
                                             if (!ready) {
                                                 refreshPreflightChecks()
@@ -398,11 +350,7 @@ class MainActivity : ComponentActivity() {
                                             preflightChecks = report.items
 
                                             if (report.hasBlockers) {
-                                                Toast.makeText(
-                                                    this@MainActivity,
-                                                    "存在阻止项，请先处理自检面板中的问题",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
+                                                Toast.makeText(this@MainActivity, "存在阻止项，请先处理自检面板中的问题", Toast.LENGTH_LONG).show()
                                                 if (!preflightExpanded) {
                                                     preflightExpanded = true
                                                 }
@@ -421,10 +369,7 @@ class MainActivity : ComponentActivity() {
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "事件标记",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
+                                Text(text = "事件标记", style = MaterialTheme.typography.titleMedium)
 
                                 Spacer(modifier = Modifier.height(8.dp))
                                 OutlinedTextField(
@@ -440,11 +385,7 @@ class MainActivity : ComponentActivity() {
                                     onClick = {
                                         val marker = eventMarkerInput.trim()
                                         if (marker.isBlank()) {
-                                            Toast.makeText(
-                                                this@MainActivity,
-                                                "事件内容不能为空",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                            Toast.makeText(this@MainActivity, "事件内容不能为空", Toast.LENGTH_SHORT).show()
                                             return@Button
                                         }
                                         sendEventMarker(marker)
@@ -527,10 +468,7 @@ class MainActivity : ComponentActivity() {
 
     private fun hasNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         } else {
             true
         }
@@ -587,17 +525,7 @@ class MainActivity : ComponentActivity() {
             PreflightCheckItem.block("修改系统设置权限", "未授权")
         }
 
-        val dataDir = getExternalFilesDir(null)?.resolve("BatteryExpData")
-        val dataDirReady = try {
-            dataDir != null && (dataDir.exists() || dataDir.mkdirs()) && dataDir.isDirectory && dataDir.canWrite()
-        } catch (_: Exception) {
-            false
-        }
-        items += if (dataDirReady) {
-            PreflightCheckItem.pass("数据目录", dataDir?.absolutePath ?: "可写")
-        } else {
-            PreflightCheckItem.block("数据目录", "不可写或无法创建")
-        }
+        items += PreflightCheckItem.pass("数据目录", SharedResultsStore.RESULTS_DIRECTORY_LABEL)
 
         val brightnessModeItem = try {
             val mode = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE)
@@ -612,18 +540,11 @@ class MainActivity : ComponentActivity() {
         items += brightnessModeItem
 
         val brightnessItem = try {
-            val currentBrightness =
-                Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+            val currentBrightness = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
             if (abs(currentBrightness - config.brightnessTarget) <= 10) {
-                PreflightCheckItem.pass(
-                    "当前亮度",
-                    "当前值 $currentBrightness，接近目标 ${config.brightnessTarget}"
-                )
+                PreflightCheckItem.pass("当前亮度", "当前值 $currentBrightness，接近目标 ${config.brightnessTarget}")
             } else {
-                PreflightCheckItem.warn(
-                    "当前亮度",
-                    "当前值 $currentBrightness，与目标 ${config.brightnessTarget} 偏差较大"
-                )
+                PreflightCheckItem.warn("当前亮度", "当前值 $currentBrightness，与目标 ${config.brightnessTarget} 偏差较大")
             }
         } catch (_: Exception) {
             PreflightCheckItem.warn("当前亮度", "无法读取")
@@ -634,8 +555,8 @@ class MainActivity : ComponentActivity() {
         val status = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val plugged = batteryStatus?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                status == BatteryManager.BATTERY_STATUS_FULL ||
-                plugged > 0
+            status == BatteryManager.BATTERY_STATUS_FULL ||
+            plugged > 0
 
         items += if (charging) {
             PreflightCheckItem.warn("充电状态", "当前处于充电/接电状态，建议拔掉充电线后开始")
@@ -721,7 +642,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@androidx.compose.runtime.Composable
+@Composable
 private fun CollapsibleCardHeader(
     title: String,
     expanded: Boolean,
@@ -734,18 +655,12 @@ private fun CollapsibleCardHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium
-            )
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = onToggle) {
                 Text(if (expanded) "收起" else "展开")
             }
         }
-        Text(
-            text = summary,
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text(text = summary, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -761,14 +676,9 @@ private data class PreflightCheckItem(
     val detail: String
 ) {
     companion object {
-        fun pass(title: String, detail: String) =
-            PreflightCheckItem(CheckLevel.PASS, title, detail)
-
-        fun warn(title: String, detail: String) =
-            PreflightCheckItem(CheckLevel.WARN, title, detail)
-
-        fun block(title: String, detail: String) =
-            PreflightCheckItem(CheckLevel.BLOCK, title, detail)
+        fun pass(title: String, detail: String) = PreflightCheckItem(CheckLevel.PASS, title, detail)
+        fun warn(title: String, detail: String) = PreflightCheckItem(CheckLevel.WARN, title, detail)
+        fun block(title: String, detail: String) = PreflightCheckItem(CheckLevel.BLOCK, title, detail)
     }
 }
 

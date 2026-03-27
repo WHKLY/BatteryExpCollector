@@ -96,11 +96,7 @@ object SharedResultsStore {
                 null
             )?.use { cursor ->
                 val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (sizeIndex >= 0 && cursor.moveToFirst()) {
-                    cursor.getLong(sizeIndex)
-                } else {
-                    0L
-                }
+                if (sizeIndex >= 0 && cursor.moveToFirst()) cursor.getLong(sizeIndex) else 0L
             } ?: 0L
         }
     }
@@ -113,11 +109,7 @@ object SharedResultsStore {
     ) {
         if (uri.scheme == "file") {
             val file = File(requireNotNull(uri.path) { "file uri path is null" })
-            if (append) {
-                file.appendText(text)
-            } else {
-                file.writeText(text)
-            }
+            if (append) file.appendText(text) else file.writeText(text)
             return
         }
 
