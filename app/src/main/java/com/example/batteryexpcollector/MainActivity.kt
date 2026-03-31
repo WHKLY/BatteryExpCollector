@@ -58,6 +58,11 @@ import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        private const val HIGH_POWER_CPU_STRESS_THREADS = 0
+        private const val HIGH_POWER_CPU_STRESS_DUTY_PERCENT = DEFAULT_CPU_STRESS_DUTY_PERCENT
+    }
+
     private var isCollecting by mutableStateOf(false)
     private var currentFilePath by mutableStateOf("")
     private var lastFilePath by mutableStateOf("")
@@ -127,6 +132,32 @@ class MainActivity : ComponentActivity() {
                             text = "BatteryExpCollector 实验采集端",
                             style = MaterialTheme.typography.headlineSmall
                         )
+
+                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "CPU High Power",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        attemptStartCollection(
+                                            highPowerEnabled = true,
+                                            onNeedNotificationPermission = {
+                                                notificationPermissionLauncher.launch(
+                                                    Manifest.permission.POST_NOTIFICATIONS
+                                                )
+                                            }
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !isCollecting
+                                ) {
+                                    Text("Start High Power Collection")
+                                }
+                            }
+                        }
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -559,7 +590,7 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
-    private fun buildConfigFromInputs(): CollectionConfig {
+    private fun buildConfigFromInputs(highPowerEnabled: Boolean = false): CollectionConfig {
         val brightness = brightnessTargetInput.toIntOrNull()?.coerceIn(0, 255)
             ?: DEFAULT_BRIGHTNESS_TARGET
 
@@ -568,7 +599,14 @@ class MainActivity : ComponentActivity() {
             experimentNote = noteInput.trim(),
             brightnessTarget = brightness,
             enforceBrightness = enforceBrightnessEnabled,
-            keepScreenOn = keepScreenOnEnabled
+            keepScreenOn = keepScreenOnEnabled,
+            highPowerEnabled = highPowerEnabled,
+            cpuStressThreads = if (highPowerEnabled) HIGH_POWER_CPU_STRESS_THREADS else 0,
+            cpuStressDutyPercent = if (highPowerEnabled) {
+                HIGH_POWER_CPU_STRESS_DUTY_PERCENT
+            } else {
+                DEFAULT_CPU_STRESS_DUTY_PERCENT
+            }
         )
     }
 
@@ -668,6 +706,12 @@ class MainActivity : ComponentActivity() {
             putExtra(BatteryCollectService.EXTRA_BRIGHTNESS_TARGET, config.brightnessTarget)
             putExtra(BatteryCollectService.EXTRA_ENFORCE_BRIGHTNESS, config.enforceBrightness)
             putExtra(BatteryCollectService.EXTRA_KEEP_SCREEN_ON, config.keepScreenOn)
+            putExtra(BatteryCollectService.EXTRA_HIGH_POWER_ENABLED, config.highPowerEnabled)
+            putExtra(BatteryCollectService.EXTRA_CPU_STRESS_THREADS, config.cpuStressThreads)
+            putExtra(
+                BatteryCollectService.EXTRA_CPU_STRESS_DUTY_PERCENT,
+                config.cpuStressDutyPercent
+            )
         }
 
         ContextCompat.startForegroundService(this, startIntent)
@@ -676,6 +720,35 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "采集启动请求已发送", Toast.LENGTH_SHORT).show()
 
         uiHandler.postDelayed({ refreshUiStateFromPrefs() }, 600L)
+    }
+
+    private fun attemptStartCollection(
+        highPowerEnabled: Boolean,
+        onNeedNotificationPermission: () -> Unit
+    ) {
+        val ready = ensurePermissionsBeforeStart(onNeedNotificationPermission)
+        if (!ready) {
+            refreshPreflightChecks()
+            return
+        }
+
+        val config = buildConfigFromInputs(highPowerEnabled = highPowerEnabled)
+        val report = evaluatePreflightChecks(config)
+        preflightChecks = report.items
+
+        if (report.hasBlockers) {
+            Toast.makeText(
+                this,
+                "瀛樺湪闃绘椤癸紝璇峰厛澶勭悊鑷闈㈡澘涓殑闂",
+                Toast.LENGTH_LONG
+            ).show()
+            if (!preflightExpanded) {
+                preflightExpanded = true
+            }
+            return
+        }
+
+        startCollection(config)
     }
 
     private fun stopCollection() {

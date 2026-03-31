@@ -5,13 +5,17 @@ import android.content.SharedPreferences
 
 const val DEFAULT_INTERVAL_MS = 1000L
 const val DEFAULT_BRIGHTNESS_TARGET = 200
+const val DEFAULT_CPU_STRESS_DUTY_PERCENT = 85
 
 data class CollectionConfig(
     val intervalMs: Long = DEFAULT_INTERVAL_MS,
     val experimentNote: String = "",
     val brightnessTarget: Int = DEFAULT_BRIGHTNESS_TARGET,
     val enforceBrightness: Boolean = true,
-    val keepScreenOn: Boolean = true
+    val keepScreenOn: Boolean = true,
+    val highPowerEnabled: Boolean = false,
+    val cpuStressThreads: Int = 0,
+    val cpuStressDutyPercent: Int = DEFAULT_CPU_STRESS_DUTY_PERCENT
 )
 
 data class CollectionSessionState(
@@ -49,6 +53,9 @@ object CollectionPrefs {
     private const val KEY_BRIGHTNESS_TARGET = "brightness_target"
     private const val KEY_ENFORCE_BRIGHTNESS = "enforce_brightness"
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+    private const val KEY_HIGH_POWER_ENABLED = "high_power_enabled"
+    private const val KEY_CPU_STRESS_THREADS = "cpu_stress_threads"
+    private const val KEY_CPU_STRESS_DUTY_PERCENT = "cpu_stress_duty_percent"
 
     private const val KEY_LATEST_TIMESTAMP_MILLIS = "latest_timestamp_millis"
     private const val KEY_LATEST_ELAPSED_SEC = "latest_elapsed_sec"
@@ -71,6 +78,9 @@ object CollectionPrefs {
             .putInt(KEY_BRIGHTNESS_TARGET, normalized.brightnessTarget)
             .putBoolean(KEY_ENFORCE_BRIGHTNESS, normalized.enforceBrightness)
             .putBoolean(KEY_KEEP_SCREEN_ON, normalized.keepScreenOn)
+            .putBoolean(KEY_HIGH_POWER_ENABLED, normalized.highPowerEnabled)
+            .putInt(KEY_CPU_STRESS_THREADS, normalized.cpuStressThreads)
+            .putInt(KEY_CPU_STRESS_DUTY_PERCENT, normalized.cpuStressDutyPercent)
             .apply()
     }
 
@@ -82,7 +92,13 @@ object CollectionPrefs {
                 experimentNote = pref.getString(KEY_EXPERIMENT_NOTE, "") ?: "",
                 brightnessTarget = pref.getInt(KEY_BRIGHTNESS_TARGET, DEFAULT_BRIGHTNESS_TARGET),
                 enforceBrightness = pref.getBoolean(KEY_ENFORCE_BRIGHTNESS, true),
-                keepScreenOn = pref.getBoolean(KEY_KEEP_SCREEN_ON, true)
+                keepScreenOn = pref.getBoolean(KEY_KEEP_SCREEN_ON, true),
+                highPowerEnabled = pref.getBoolean(KEY_HIGH_POWER_ENABLED, false),
+                cpuStressThreads = pref.getInt(KEY_CPU_STRESS_THREADS, 0),
+                cpuStressDutyPercent = pref.getInt(
+                    KEY_CPU_STRESS_DUTY_PERCENT,
+                    DEFAULT_CPU_STRESS_DUTY_PERCENT
+                )
             )
         )
     }
@@ -182,7 +198,9 @@ object CollectionPrefs {
         return config.copy(
             intervalMs = config.intervalMs.coerceIn(250L, 10_000L),
             experimentNote = config.experimentNote.trim(),
-            brightnessTarget = config.brightnessTarget.coerceIn(0, 255)
+            brightnessTarget = config.brightnessTarget.coerceIn(0, 255),
+            cpuStressThreads = config.cpuStressThreads.coerceAtLeast(0),
+            cpuStressDutyPercent = config.cpuStressDutyPercent.coerceIn(10, 100)
         )
     }
 

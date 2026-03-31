@@ -43,6 +43,9 @@ class BatteryCollectService : Service() {
         const val EXTRA_BRIGHTNESS_TARGET = "extra_brightness_target"
         const val EXTRA_ENFORCE_BRIGHTNESS = "extra_enforce_brightness"
         const val EXTRA_KEEP_SCREEN_ON = "extra_keep_screen_on"
+        const val EXTRA_HIGH_POWER_ENABLED = "extra_high_power_enabled"
+        const val EXTRA_CPU_STRESS_THREADS = "extra_cpu_stress_threads"
+        const val EXTRA_CPU_STRESS_DUTY_PERCENT = "extra_cpu_stress_duty_percent"
         const val EXTRA_EVENT_MARKER = "extra_event_marker"
     }
 
@@ -60,6 +63,7 @@ class BatteryCollectService : Service() {
     private var isCollectingSession = false
     private var currentConfig: CollectionConfig = CollectionConfig()
     private var pendingEventMarker: String? = null
+    private val cpuStressController = CpuStressController()
 
     private var sampleCount: Long = 0L
     private var screenOffObserved: Boolean = false
@@ -166,6 +170,7 @@ class BatteryCollectService : Service() {
 
     override fun onDestroy() {
         stopSamplingLoop()
+        cpuStressController.stop()
         unregisterBatteryReceiverIfNeeded()
 
         sampleThread?.quitSafely()
@@ -184,19 +189,29 @@ class BatteryCollectService : Service() {
                 DEFAULT_BRIGHTNESS_TARGET
             ),
             enforceBrightness = intent.getBooleanExtra(EXTRA_ENFORCE_BRIGHTNESS, true),
-            keepScreenOn = intent.getBooleanExtra(EXTRA_KEEP_SCREEN_ON, true)
+            keepScreenOn = intent.getBooleanExtra(EXTRA_KEEP_SCREEN_ON, true),
+            highPowerEnabled = intent.getBooleanExtra(EXTRA_HIGH_POWER_ENABLED, false),
+            cpuStressThreads = intent.getIntExtra(EXTRA_CPU_STRESS_THREADS, 0),
+            cpuStressDutyPercent = intent.getIntExtra(
+                EXTRA_CPU_STRESS_DUTY_PERCENT,
+                DEFAULT_CPU_STRESS_DUTY_PERCENT
+            )
         )
     }
 
     private fun startNewSession(config: CollectionConfig) {
         stopSamplingLoop()
+        cpuStressController.stop()
 
         currentConfig = CollectionPrefs.loadConfig(this).copy(
             intervalMs = config.intervalMs.coerceIn(250L, 10_000L),
             experimentNote = config.experimentNote.trim(),
             brightnessTarget = config.brightnessTarget.coerceIn(0, 255),
             enforceBrightness = config.enforceBrightness,
-            keepScreenOn = config.keepScreenOn
+            keepScreenOn = config.keepScreenOn,
+            highPowerEnabled = config.highPowerEnabled,
+            cpuStressThreads = config.cpuStressThreads.coerceAtLeast(0),
+            cpuStressDutyPercent = config.cpuStressDutyPercent.coerceIn(10, 100)
         )
 
         startTimeMillis = System.currentTimeMillis()
@@ -229,7 +244,18 @@ class BatteryCollectService : Service() {
             false
         }
 
-        pendingEventMarker = null
+        if (currentConfig.highPowerEnabled) {
+            cpuStressController.start(
+                threadCount = currentConfig.cpuStressThreads,
+                dutyPercent = currentConfig.cpuStressDutyPercent
+            )
+        }
+
+        pendingEventMarker = if (currentConfig.highPowerEnabled) {
+            "high_power_mode_start"
+        } else {
+            null
+        }
         isCollectingSession = true
 
         updateNotification("采集中：$currentCsvDisplayName")
@@ -268,6 +294,15 @@ class BatteryCollectService : Service() {
             false
         }
 
+        if (currentConfig.highPowerEnabled) {
+            cpuStressController.start(
+                threadCount = currentConfig.cpuStressThreads,
+                dutyPercent = currentConfig.cpuStressDutyPercent
+            )
+        } else {
+            cpuStressController.stop()
+        }
+
         pendingEventMarker = null
         isCollectingSession = true
 
@@ -297,6 +332,7 @@ class BatteryCollectService : Service() {
         }
 
         stopSamplingLoop()
+        cpuStressController.stop()
 
         isCollectingSession = false
         pendingEventMarker = null
@@ -700,6 +736,9 @@ class BatteryCollectService : Service() {
             "# target_brightness=${config.brightnessTarget}",
             "# enforce_brightness=${config.enforceBrightness}",
             "# keep_screen_on=${config.keepScreenOn}",
+            "# high_power_enabled=${config.highPowerEnabled}",
+            "# cpu_stress_threads=${config.cpuStressThreads}",
+            "# cpu_stress_duty_percent=${config.cpuStressDutyPercent}",
             "# experiment_note=${config.experimentNote}",
             "# results_directory=${SharedResultsStore.RESULTS_DIRECTORY_LABEL}"
         )
@@ -765,6 +804,9 @@ class BatteryCollectService : Service() {
                 appendLine("target_brightness=${config.brightnessTarget}")
                 appendLine("enforce_brightness=${config.enforceBrightness}")
                 appendLine("keep_screen_on=${config.keepScreenOn}")
+                appendLine("high_power_enabled=${config.highPowerEnabled}")
+                appendLine("cpu_stress_threads=${config.cpuStressThreads}")
+                appendLine("cpu_stress_duty_percent=${config.cpuStressDutyPercent}")
                 appendLine("screen_off_observed=${if (screenOffObserved) 1 else 0}")
                 appendLine("charging_observed=${if (chargingObserved) 1 else 0}")
                 appendLine("experiment_note=${config.experimentNote}")
