@@ -58,9 +58,23 @@ import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
-    companion object {
-        private const val HIGH_POWER_CPU_STRESS_THREADS = 0
-        private const val HIGH_POWER_CPU_STRESS_DUTY_PERCENT = DEFAULT_CPU_STRESS_DUTY_PERCENT
+    private enum class CpuStressLevel(
+        val label: String,
+        val threadCount: Int,
+        val dutyPercent: Int
+    ) {
+        MEDIUM("Medium", 2, 65),
+        HIGH("High", 0, 85),
+        EXTREME("Extreme", 0, 100);
+
+        companion object {
+            fun fromConfig(config: CollectionConfig): CpuStressLevel {
+                return entries.firstOrNull { level ->
+                    level.threadCount == config.cpuStressThreads &&
+                            level.dutyPercent == config.cpuStressDutyPercent
+                } ?: HIGH
+            }
+        }
     }
 
     private var isCollecting by mutableStateOf(false)
@@ -76,6 +90,7 @@ class MainActivity : ComponentActivity() {
     private var brightnessTargetInput by mutableStateOf(DEFAULT_BRIGHTNESS_TARGET.toString())
     private var enforceBrightnessEnabled by mutableStateOf(true)
     private var keepScreenOnEnabled by mutableStateOf(true)
+    private var selectedCpuStressLevel by mutableStateOf(CpuStressLevel.HIGH)
     private var eventMarkerInput by mutableStateOf("")
 
     private var preflightChecks by mutableStateOf<List<PreflightCheckItem>>(emptyList())
@@ -140,10 +155,37 @@ class MainActivity : ComponentActivity() {
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Stress Level",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CpuStressLevel.entries.forEach { level ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(
+                                                selected = selectedCpuStressLevel == level,
+                                                onClick = { selectedCpuStressLevel = level },
+                                                enabled = !isCollecting
+                                            )
+                                            Text(text = level.label)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = "Threads=${
+                                        if (selectedCpuStressLevel.threadCount == 0) "Auto"
+                                        else selectedCpuStressLevel.threadCount.toString()
+                                    }, duty=${selectedCpuStressLevel.dutyPercent}%",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Button(
                                     onClick = {
                                         attemptStartCollection(
                                             highPowerEnabled = true,
+                                            stressLevel = selectedCpuStressLevel,
                                             onNeedNotificationPermission = {
                                                 notificationPermissionLauncher.launch(
                                                     Manifest.permission.POST_NOTIFICATIONS
@@ -541,6 +583,7 @@ class MainActivity : ComponentActivity() {
         brightnessTargetInput = config.brightnessTarget.toString()
         enforceBrightnessEnabled = config.enforceBrightness
         keepScreenOnEnabled = config.keepScreenOn
+        selectedCpuStressLevel = CpuStressLevel.fromConfig(config)
     }
 
     private fun refreshPreflightChecks() {
@@ -590,7 +633,10 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
-    private fun buildConfigFromInputs(highPowerEnabled: Boolean = false): CollectionConfig {
+    private fun buildConfigFromInputs(
+        highPowerEnabled: Boolean = false,
+        stressLevel: CpuStressLevel = selectedCpuStressLevel
+    ): CollectionConfig {
         val brightness = brightnessTargetInput.toIntOrNull()?.coerceIn(0, 255)
             ?: DEFAULT_BRIGHTNESS_TARGET
 
@@ -601,9 +647,9 @@ class MainActivity : ComponentActivity() {
             enforceBrightness = enforceBrightnessEnabled,
             keepScreenOn = keepScreenOnEnabled,
             highPowerEnabled = highPowerEnabled,
-            cpuStressThreads = if (highPowerEnabled) HIGH_POWER_CPU_STRESS_THREADS else 0,
+            cpuStressThreads = if (highPowerEnabled) stressLevel.threadCount else 0,
             cpuStressDutyPercent = if (highPowerEnabled) {
-                HIGH_POWER_CPU_STRESS_DUTY_PERCENT
+                stressLevel.dutyPercent
             } else {
                 DEFAULT_CPU_STRESS_DUTY_PERCENT
             }
@@ -724,6 +770,7 @@ class MainActivity : ComponentActivity() {
 
     private fun attemptStartCollection(
         highPowerEnabled: Boolean,
+        stressLevel: CpuStressLevel = selectedCpuStressLevel,
         onNeedNotificationPermission: () -> Unit
     ) {
         val ready = ensurePermissionsBeforeStart(onNeedNotificationPermission)
@@ -732,7 +779,10 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val config = buildConfigFromInputs(highPowerEnabled = highPowerEnabled)
+        val config = buildConfigFromInputs(
+            highPowerEnabled = highPowerEnabled,
+            stressLevel = stressLevel
+        )
         val report = evaluatePreflightChecks(config)
         preflightChecks = report.items
 

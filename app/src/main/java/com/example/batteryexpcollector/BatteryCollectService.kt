@@ -492,6 +492,9 @@ class BatteryCollectService : Service() {
             csvField(booleanFlag(batteryIntentReadOk)),
             csvField(booleanFlag(batteryPropertyReadOk)),
 
+            csvField(booleanFlag(currentConfig.highPowerEnabled)),
+            csvField(currentConfig.cpuStressThreads),
+            csvField(currentConfig.cpuStressDutyPercent),
             csvField(currentConfig.experimentNote),
             csvField(eventMarker)
         ).joinToString(",")
@@ -754,6 +757,7 @@ class BatteryCollectService : Service() {
                     "CPU0_Freq_kHz,CPUFreqReadOk," +
                     "NetType,TxBytes_Total,RxBytes_Total,Tx_Rate_Bps,Rx_Rate_Bps,NetStatsReadOk," +
                     "BatteryIntentReadOk,BatteryPropertyReadOk," +
+                    "HighPowerEnabled,CpuStressThreads,CpuStressDutyPercent," +
                     "ExperimentNote,EventMarker"
         )
     }
