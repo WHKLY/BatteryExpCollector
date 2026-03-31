@@ -46,6 +46,17 @@ class BatteryCollectService : Service() {
         const val EXTRA_HIGH_POWER_ENABLED = "extra_high_power_enabled"
         const val EXTRA_CPU_STRESS_THREADS = "extra_cpu_stress_threads"
         const val EXTRA_CPU_STRESS_DUTY_PERCENT = "extra_cpu_stress_duty_percent"
+        const val EXTRA_NETWORK_LOAD_ENABLED = "extra_network_load_enabled"
+        const val EXTRA_NETWORK_SCENARIO = "extra_network_scenario"
+        const val EXTRA_NETWORK_CONNECTION_MODE = "extra_network_connection_mode"
+        const val EXTRA_NETWORK_CONCURRENCY = "extra_network_concurrency"
+        const val EXTRA_NETWORK_RETRY_ENABLED = "extra_network_retry_enabled"
+        const val EXTRA_NETWORK_MAX_RETRY_COUNT = "extra_network_max_retry_count"
+        const val EXTRA_NETWORK_DOWNLOAD_URL = "extra_network_download_url"
+        const val EXTRA_NETWORK_UPLOAD_URL = "extra_network_upload_url"
+        const val EXTRA_NETWORK_BURST_URL = "extra_network_burst_url"
+        const val EXTRA_NETWORK_UPLOAD_CHUNK_BYTES = "extra_network_upload_chunk_bytes"
+        const val EXTRA_NETWORK_BURST_INTERVAL_MS = "extra_network_burst_interval_ms"
         const val EXTRA_EVENT_MARKER = "extra_event_marker"
     }
 
@@ -64,6 +75,7 @@ class BatteryCollectService : Service() {
     private var currentConfig: CollectionConfig = CollectionConfig()
     private var pendingEventMarker: String? = null
     private val cpuStressController = CpuStressController()
+    private val networkLoadController = NetworkLoadController()
 
     private var sampleCount: Long = 0L
     private var screenOffObserved: Boolean = false
@@ -171,6 +183,7 @@ class BatteryCollectService : Service() {
     override fun onDestroy() {
         stopSamplingLoop()
         cpuStressController.stop()
+        networkLoadController.stop()
         unregisterBatteryReceiverIfNeeded()
 
         sampleThread?.quitSafely()
@@ -195,6 +208,28 @@ class BatteryCollectService : Service() {
             cpuStressDutyPercent = intent.getIntExtra(
                 EXTRA_CPU_STRESS_DUTY_PERCENT,
                 DEFAULT_CPU_STRESS_DUTY_PERCENT
+            ),
+            networkLoadEnabled = intent.getBooleanExtra(EXTRA_NETWORK_LOAD_ENABLED, false),
+            networkScenario = intent.getStringExtra(EXTRA_NETWORK_SCENARIO)
+                ?: NETWORK_SCENARIO_DOWNLOAD_LOOP,
+            networkConnectionMode = intent.getStringExtra(EXTRA_NETWORK_CONNECTION_MODE)
+                ?: NETWORK_CONNECTION_SINGLE,
+            networkConcurrency = intent.getIntExtra(EXTRA_NETWORK_CONCURRENCY, 1),
+            networkRetryEnabled = intent.getBooleanExtra(EXTRA_NETWORK_RETRY_ENABLED, true),
+            networkMaxRetryCount = intent.getIntExtra(
+                EXTRA_NETWORK_MAX_RETRY_COUNT,
+                DEFAULT_NETWORK_MAX_RETRY_COUNT
+            ),
+            networkDownloadUrl = intent.getStringExtra(EXTRA_NETWORK_DOWNLOAD_URL).orEmpty(),
+            networkUploadUrl = intent.getStringExtra(EXTRA_NETWORK_UPLOAD_URL).orEmpty(),
+            networkBurstUrl = intent.getStringExtra(EXTRA_NETWORK_BURST_URL).orEmpty(),
+            networkUploadChunkBytes = intent.getIntExtra(
+                EXTRA_NETWORK_UPLOAD_CHUNK_BYTES,
+                DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES
+            ),
+            networkBurstIntervalMs = intent.getLongExtra(
+                EXTRA_NETWORK_BURST_INTERVAL_MS,
+                DEFAULT_NETWORK_BURST_INTERVAL_MS
             )
         )
     }
@@ -202,6 +237,7 @@ class BatteryCollectService : Service() {
     private fun startNewSession(config: CollectionConfig) {
         stopSamplingLoop()
         cpuStressController.stop()
+        networkLoadController.stop()
 
         currentConfig = CollectionPrefs.loadConfig(this).copy(
             intervalMs = config.intervalMs.coerceIn(250L, 10_000L),
@@ -211,7 +247,18 @@ class BatteryCollectService : Service() {
             keepScreenOn = config.keepScreenOn,
             highPowerEnabled = config.highPowerEnabled,
             cpuStressThreads = config.cpuStressThreads.coerceAtLeast(0),
-            cpuStressDutyPercent = config.cpuStressDutyPercent.coerceIn(10, 100)
+            cpuStressDutyPercent = config.cpuStressDutyPercent.coerceIn(10, 100),
+            networkLoadEnabled = config.networkLoadEnabled,
+            networkScenario = config.networkScenario,
+            networkConnectionMode = config.networkConnectionMode,
+            networkConcurrency = config.networkConcurrency.coerceIn(1, 8),
+            networkRetryEnabled = config.networkRetryEnabled,
+            networkMaxRetryCount = config.networkMaxRetryCount.coerceIn(0, 10),
+            networkDownloadUrl = config.networkDownloadUrl.trim(),
+            networkUploadUrl = config.networkUploadUrl.trim(),
+            networkBurstUrl = config.networkBurstUrl.trim(),
+            networkUploadChunkBytes = config.networkUploadChunkBytes.coerceIn(1_024, 5_242_880),
+            networkBurstIntervalMs = config.networkBurstIntervalMs.coerceIn(50L, 60_000L)
         )
 
         startTimeMillis = System.currentTimeMillis()
@@ -251,10 +298,14 @@ class BatteryCollectService : Service() {
             )
         }
 
-        pendingEventMarker = if (currentConfig.highPowerEnabled) {
-            "high_power_mode_start"
-        } else {
-            null
+        if (currentConfig.networkLoadEnabled) {
+            networkLoadController.start(currentConfig)
+        }
+
+        pendingEventMarker = when {
+            currentConfig.highPowerEnabled -> "high_power_mode_start"
+            currentConfig.networkLoadEnabled -> "network_load_start"
+            else -> null
         }
         isCollectingSession = true
 
@@ -303,6 +354,12 @@ class BatteryCollectService : Service() {
             cpuStressController.stop()
         }
 
+        if (currentConfig.networkLoadEnabled) {
+            networkLoadController.start(currentConfig)
+        } else {
+            networkLoadController.stop()
+        }
+
         pendingEventMarker = null
         isCollectingSession = true
 
@@ -316,6 +373,7 @@ class BatteryCollectService : Service() {
         val csvDisplayName = currentCsvDisplayName
         val csvLogicalPath = currentCsvLogicalPath
         val stopTimeMillis = System.currentTimeMillis()
+        val networkStats = networkLoadController.snapshot()
 
         if (csvUri != null) {
             writeSessionSummaryFile(
@@ -327,12 +385,14 @@ class BatteryCollectService : Service() {
                 endedAtMillis = stopTimeMillis,
                 sampleCount = sampleCount,
                 screenOffObserved = screenOffObserved,
-                chargingObserved = chargingObserved
+                chargingObserved = chargingObserved,
+                networkStats = networkStats
             )
         }
 
         stopSamplingLoop()
         cpuStressController.stop()
+        networkLoadController.stop()
 
         isCollectingSession = false
         pendingEventMarker = null
@@ -451,6 +511,7 @@ class BatteryCollectService : Service() {
         val screenOnSnapshot = readScreenOnSnapshot()
         val cpuFreqSnapshot = readCpuFreqSnapshot()
         val networkSnapshot = readNetworkSnapshot(now)
+        val networkTaskStats = networkLoadController.snapshot()
 
         val eventMarker = pendingEventMarker
         pendingEventMarker = null
@@ -495,6 +556,18 @@ class BatteryCollectService : Service() {
             csvField(booleanFlag(currentConfig.highPowerEnabled)),
             csvField(currentConfig.cpuStressThreads),
             csvField(currentConfig.cpuStressDutyPercent),
+            csvField(booleanFlag(currentConfig.networkLoadEnabled)),
+            csvField(currentConfig.networkScenario),
+            csvField(currentConfig.networkConnectionMode),
+            csvField(currentConfig.networkConcurrency),
+            csvField(networkTaskStats.activeWorkers),
+            csvField(networkTaskStats.totalDownloadBytes),
+            csvField(networkTaskStats.totalUploadBytes),
+            csvField(networkTaskStats.successCount),
+            csvField(networkTaskStats.failureCount),
+            csvField(networkTaskStats.retryCount),
+            csvField(networkTaskStats.operationCount),
+            csvField(networkTaskStats.averageOperationDurationMs),
             csvField(currentConfig.experimentNote),
             csvField(eventMarker)
         ).joinToString(",")
@@ -742,6 +815,17 @@ class BatteryCollectService : Service() {
             "# high_power_enabled=${config.highPowerEnabled}",
             "# cpu_stress_threads=${config.cpuStressThreads}",
             "# cpu_stress_duty_percent=${config.cpuStressDutyPercent}",
+            "# network_load_enabled=${config.networkLoadEnabled}",
+            "# network_scenario=${config.networkScenario}",
+            "# network_connection_mode=${config.networkConnectionMode}",
+            "# network_concurrency=${config.networkConcurrency}",
+            "# network_retry_enabled=${config.networkRetryEnabled}",
+            "# network_max_retry_count=${config.networkMaxRetryCount}",
+            "# network_download_url=${config.networkDownloadUrl}",
+            "# network_upload_url=${config.networkUploadUrl}",
+            "# network_burst_url=${config.networkBurstUrl}",
+            "# network_upload_chunk_bytes=${config.networkUploadChunkBytes}",
+            "# network_burst_interval_ms=${config.networkBurstIntervalMs}",
             "# experiment_note=${config.experimentNote}",
             "# results_directory=${SharedResultsStore.RESULTS_DIRECTORY_LABEL}"
         )
@@ -758,6 +842,10 @@ class BatteryCollectService : Service() {
                     "NetType,TxBytes_Total,RxBytes_Total,Tx_Rate_Bps,Rx_Rate_Bps,NetStatsReadOk," +
                     "BatteryIntentReadOk,BatteryPropertyReadOk," +
                     "HighPowerEnabled,CpuStressThreads,CpuStressDutyPercent," +
+                    "NetworkLoadEnabled,NetworkScenario,NetworkConnectionMode,NetworkConcurrency," +
+                    "NetTask_ActiveWorkers,NetTask_TotalDownloadBytes,NetTask_TotalUploadBytes," +
+                    "NetTask_SuccessCount,NetTask_FailureCount,NetTask_RetryCount," +
+                    "NetTask_OperationCount,NetTask_AvgOperationDurationMs," +
                     "ExperimentNote,EventMarker"
         )
     }
@@ -784,7 +872,8 @@ class BatteryCollectService : Service() {
         endedAtMillis: Long,
         sampleCount: Long,
         screenOffObserved: Boolean,
-        chargingObserved: Boolean
+        chargingObserved: Boolean,
+        networkStats: NetworkTaskStatsSnapshot
     ) {
         try {
             val summaryDisplayName =
@@ -811,6 +900,25 @@ class BatteryCollectService : Service() {
                 appendLine("high_power_enabled=${config.highPowerEnabled}")
                 appendLine("cpu_stress_threads=${config.cpuStressThreads}")
                 appendLine("cpu_stress_duty_percent=${config.cpuStressDutyPercent}")
+                appendLine("network_load_enabled=${config.networkLoadEnabled}")
+                appendLine("network_scenario=${config.networkScenario}")
+                appendLine("network_connection_mode=${config.networkConnectionMode}")
+                appendLine("network_concurrency=${config.networkConcurrency}")
+                appendLine("network_retry_enabled=${config.networkRetryEnabled}")
+                appendLine("network_max_retry_count=${config.networkMaxRetryCount}")
+                appendLine("network_download_url=${config.networkDownloadUrl}")
+                appendLine("network_upload_url=${config.networkUploadUrl}")
+                appendLine("network_burst_url=${config.networkBurstUrl}")
+                appendLine("network_upload_chunk_bytes=${config.networkUploadChunkBytes}")
+                appendLine("network_burst_interval_ms=${config.networkBurstIntervalMs}")
+                appendLine("network_task_active_workers=${networkStats.activeWorkers}")
+                appendLine("network_total_download_bytes=${networkStats.totalDownloadBytes}")
+                appendLine("network_total_upload_bytes=${networkStats.totalUploadBytes}")
+                appendLine("network_success_count=${networkStats.successCount}")
+                appendLine("network_failure_count=${networkStats.failureCount}")
+                appendLine("network_retry_count=${networkStats.retryCount}")
+                appendLine("network_operation_count=${networkStats.operationCount}")
+                appendLine("network_avg_operation_duration_ms=${networkStats.averageOperationDurationMs}")
                 appendLine("screen_off_observed=${if (screenOffObserved) 1 else 0}")
                 appendLine("charging_observed=${if (chargingObserved) 1 else 0}")
                 appendLine("experiment_note=${config.experimentNote}")

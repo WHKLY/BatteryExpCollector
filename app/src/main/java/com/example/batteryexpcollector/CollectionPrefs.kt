@@ -6,6 +6,17 @@ import android.content.SharedPreferences
 const val DEFAULT_INTERVAL_MS = 1000L
 const val DEFAULT_BRIGHTNESS_TARGET = 200
 const val DEFAULT_CPU_STRESS_DUTY_PERCENT = 85
+const val DEFAULT_NETWORK_MAX_RETRY_COUNT = 3
+const val DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES = 262_144
+const val DEFAULT_NETWORK_BURST_INTERVAL_MS = 250L
+const val DEFAULT_NETWORK_MULTI_CONCURRENCY = 4
+
+const val NETWORK_SCENARIO_DOWNLOAD_LOOP = "download_loop"
+const val NETWORK_SCENARIO_UPLOAD_LOOP = "upload_loop"
+const val NETWORK_SCENARIO_SMALL_REQUEST_BURST = "small_request_burst"
+
+const val NETWORK_CONNECTION_SINGLE = "single"
+const val NETWORK_CONNECTION_MULTI = "multi"
 
 data class CollectionConfig(
     val intervalMs: Long = DEFAULT_INTERVAL_MS,
@@ -15,7 +26,18 @@ data class CollectionConfig(
     val keepScreenOn: Boolean = true,
     val highPowerEnabled: Boolean = false,
     val cpuStressThreads: Int = 0,
-    val cpuStressDutyPercent: Int = DEFAULT_CPU_STRESS_DUTY_PERCENT
+    val cpuStressDutyPercent: Int = DEFAULT_CPU_STRESS_DUTY_PERCENT,
+    val networkLoadEnabled: Boolean = false,
+    val networkScenario: String = NETWORK_SCENARIO_DOWNLOAD_LOOP,
+    val networkConnectionMode: String = NETWORK_CONNECTION_SINGLE,
+    val networkConcurrency: Int = 1,
+    val networkRetryEnabled: Boolean = true,
+    val networkMaxRetryCount: Int = DEFAULT_NETWORK_MAX_RETRY_COUNT,
+    val networkDownloadUrl: String = "",
+    val networkUploadUrl: String = "",
+    val networkBurstUrl: String = "",
+    val networkUploadChunkBytes: Int = DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES,
+    val networkBurstIntervalMs: Long = DEFAULT_NETWORK_BURST_INTERVAL_MS
 )
 
 data class CollectionSessionState(
@@ -56,6 +78,17 @@ object CollectionPrefs {
     private const val KEY_HIGH_POWER_ENABLED = "high_power_enabled"
     private const val KEY_CPU_STRESS_THREADS = "cpu_stress_threads"
     private const val KEY_CPU_STRESS_DUTY_PERCENT = "cpu_stress_duty_percent"
+    private const val KEY_NETWORK_LOAD_ENABLED = "network_load_enabled"
+    private const val KEY_NETWORK_SCENARIO = "network_scenario"
+    private const val KEY_NETWORK_CONNECTION_MODE = "network_connection_mode"
+    private const val KEY_NETWORK_CONCURRENCY = "network_concurrency"
+    private const val KEY_NETWORK_RETRY_ENABLED = "network_retry_enabled"
+    private const val KEY_NETWORK_MAX_RETRY_COUNT = "network_max_retry_count"
+    private const val KEY_NETWORK_DOWNLOAD_URL = "network_download_url"
+    private const val KEY_NETWORK_UPLOAD_URL = "network_upload_url"
+    private const val KEY_NETWORK_BURST_URL = "network_burst_url"
+    private const val KEY_NETWORK_UPLOAD_CHUNK_BYTES = "network_upload_chunk_bytes"
+    private const val KEY_NETWORK_BURST_INTERVAL_MS = "network_burst_interval_ms"
 
     private const val KEY_LATEST_TIMESTAMP_MILLIS = "latest_timestamp_millis"
     private const val KEY_LATEST_ELAPSED_SEC = "latest_elapsed_sec"
@@ -81,6 +114,17 @@ object CollectionPrefs {
             .putBoolean(KEY_HIGH_POWER_ENABLED, normalized.highPowerEnabled)
             .putInt(KEY_CPU_STRESS_THREADS, normalized.cpuStressThreads)
             .putInt(KEY_CPU_STRESS_DUTY_PERCENT, normalized.cpuStressDutyPercent)
+            .putBoolean(KEY_NETWORK_LOAD_ENABLED, normalized.networkLoadEnabled)
+            .putString(KEY_NETWORK_SCENARIO, normalized.networkScenario)
+            .putString(KEY_NETWORK_CONNECTION_MODE, normalized.networkConnectionMode)
+            .putInt(KEY_NETWORK_CONCURRENCY, normalized.networkConcurrency)
+            .putBoolean(KEY_NETWORK_RETRY_ENABLED, normalized.networkRetryEnabled)
+            .putInt(KEY_NETWORK_MAX_RETRY_COUNT, normalized.networkMaxRetryCount)
+            .putString(KEY_NETWORK_DOWNLOAD_URL, normalized.networkDownloadUrl)
+            .putString(KEY_NETWORK_UPLOAD_URL, normalized.networkUploadUrl)
+            .putString(KEY_NETWORK_BURST_URL, normalized.networkBurstUrl)
+            .putInt(KEY_NETWORK_UPLOAD_CHUNK_BYTES, normalized.networkUploadChunkBytes)
+            .putLong(KEY_NETWORK_BURST_INTERVAL_MS, normalized.networkBurstIntervalMs)
             .apply()
     }
 
@@ -98,6 +142,32 @@ object CollectionPrefs {
                 cpuStressDutyPercent = pref.getInt(
                     KEY_CPU_STRESS_DUTY_PERCENT,
                     DEFAULT_CPU_STRESS_DUTY_PERCENT
+                ),
+                networkLoadEnabled = pref.getBoolean(KEY_NETWORK_LOAD_ENABLED, false),
+                networkScenario = pref.getString(
+                    KEY_NETWORK_SCENARIO,
+                    NETWORK_SCENARIO_DOWNLOAD_LOOP
+                ) ?: NETWORK_SCENARIO_DOWNLOAD_LOOP,
+                networkConnectionMode = pref.getString(
+                    KEY_NETWORK_CONNECTION_MODE,
+                    NETWORK_CONNECTION_SINGLE
+                ) ?: NETWORK_CONNECTION_SINGLE,
+                networkConcurrency = pref.getInt(KEY_NETWORK_CONCURRENCY, 1),
+                networkRetryEnabled = pref.getBoolean(KEY_NETWORK_RETRY_ENABLED, true),
+                networkMaxRetryCount = pref.getInt(
+                    KEY_NETWORK_MAX_RETRY_COUNT,
+                    DEFAULT_NETWORK_MAX_RETRY_COUNT
+                ),
+                networkDownloadUrl = pref.getString(KEY_NETWORK_DOWNLOAD_URL, "") ?: "",
+                networkUploadUrl = pref.getString(KEY_NETWORK_UPLOAD_URL, "") ?: "",
+                networkBurstUrl = pref.getString(KEY_NETWORK_BURST_URL, "") ?: "",
+                networkUploadChunkBytes = pref.getInt(
+                    KEY_NETWORK_UPLOAD_CHUNK_BYTES,
+                    DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES
+                ),
+                networkBurstIntervalMs = pref.getLong(
+                    KEY_NETWORK_BURST_INTERVAL_MS,
+                    DEFAULT_NETWORK_BURST_INTERVAL_MS
                 )
             )
         )
@@ -200,7 +270,25 @@ object CollectionPrefs {
             experimentNote = config.experimentNote.trim(),
             brightnessTarget = config.brightnessTarget.coerceIn(0, 255),
             cpuStressThreads = config.cpuStressThreads.coerceAtLeast(0),
-            cpuStressDutyPercent = config.cpuStressDutyPercent.coerceIn(10, 100)
+            cpuStressDutyPercent = config.cpuStressDutyPercent.coerceIn(10, 100),
+            networkScenario = when (config.networkScenario) {
+                NETWORK_SCENARIO_DOWNLOAD_LOOP,
+                NETWORK_SCENARIO_UPLOAD_LOOP,
+                NETWORK_SCENARIO_SMALL_REQUEST_BURST -> config.networkScenario
+                else -> NETWORK_SCENARIO_DOWNLOAD_LOOP
+            },
+            networkConnectionMode = when (config.networkConnectionMode) {
+                NETWORK_CONNECTION_SINGLE,
+                NETWORK_CONNECTION_MULTI -> config.networkConnectionMode
+                else -> NETWORK_CONNECTION_SINGLE
+            },
+            networkConcurrency = config.networkConcurrency.coerceIn(1, 8),
+            networkMaxRetryCount = config.networkMaxRetryCount.coerceIn(0, 10),
+            networkDownloadUrl = config.networkDownloadUrl.trim(),
+            networkUploadUrl = config.networkUploadUrl.trim(),
+            networkBurstUrl = config.networkBurstUrl.trim(),
+            networkUploadChunkBytes = config.networkUploadChunkBytes.coerceIn(1_024, 5_242_880),
+            networkBurstIntervalMs = config.networkBurstIntervalMs.coerceIn(50L, 60_000L)
         )
     }
 

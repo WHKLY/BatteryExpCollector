@@ -77,6 +77,38 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private enum class NetworkScenarioUi(
+        val label: String,
+        val configValue: String
+    ) {
+        DOWNLOAD_LOOP("Download Loop", NETWORK_SCENARIO_DOWNLOAD_LOOP),
+        UPLOAD_LOOP("Upload Loop", NETWORK_SCENARIO_UPLOAD_LOOP),
+        SMALL_REQUEST_BURST("Small Request Burst", NETWORK_SCENARIO_SMALL_REQUEST_BURST);
+
+        companion object {
+            fun fromConfig(config: CollectionConfig): NetworkScenarioUi {
+                return entries.firstOrNull { it.configValue == config.networkScenario }
+                    ?: DOWNLOAD_LOOP
+            }
+        }
+    }
+
+    private enum class NetworkConnectionModeUi(
+        val label: String,
+        val configValue: String,
+        val concurrency: Int
+    ) {
+        SINGLE("Single", NETWORK_CONNECTION_SINGLE, 1),
+        MULTI("Multi", NETWORK_CONNECTION_MULTI, DEFAULT_NETWORK_MULTI_CONCURRENCY);
+
+        companion object {
+            fun fromConfig(config: CollectionConfig): NetworkConnectionModeUi {
+                return entries.firstOrNull { it.configValue == config.networkConnectionMode }
+                    ?: SINGLE
+            }
+        }
+    }
+
     private var isCollecting by mutableStateOf(false)
     private var currentFilePath by mutableStateOf("")
     private var lastFilePath by mutableStateOf("")
@@ -91,6 +123,19 @@ class MainActivity : ComponentActivity() {
     private var enforceBrightnessEnabled by mutableStateOf(true)
     private var keepScreenOnEnabled by mutableStateOf(true)
     private var selectedCpuStressLevel by mutableStateOf(CpuStressLevel.HIGH)
+    private var selectedNetworkScenario by mutableStateOf(NetworkScenarioUi.DOWNLOAD_LOOP)
+    private var selectedNetworkConnectionMode by mutableStateOf(NetworkConnectionModeUi.SINGLE)
+    private var networkRetryEnabled by mutableStateOf(true)
+    private var networkMaxRetryCountInput by mutableStateOf(DEFAULT_NETWORK_MAX_RETRY_COUNT.toString())
+    private var networkDownloadUrlInput by mutableStateOf("")
+    private var networkUploadUrlInput by mutableStateOf("")
+    private var networkBurstUrlInput by mutableStateOf("")
+    private var networkUploadChunkKbInput by mutableStateOf(
+        (DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES / 1024).toString()
+    )
+    private var networkBurstIntervalMsInput by mutableStateOf(
+        DEFAULT_NETWORK_BURST_INTERVAL_MS.toString()
+    )
     private var eventMarkerInput by mutableStateOf("")
 
     private var preflightChecks by mutableStateOf<List<PreflightCheckItem>>(emptyList())
@@ -189,6 +234,157 @@ class MainActivity : ComponentActivity() {
                                     enabled = !isCollecting
                                 ) {
                                     Text("Start High Power Collection")
+                                }
+                            }
+                        }
+
+                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "Network Power",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Scenario",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    NetworkScenarioUi.entries.forEach { scenario ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(
+                                                selected = selectedNetworkScenario == scenario,
+                                                onClick = { selectedNetworkScenario = scenario },
+                                                enabled = !isCollecting
+                                            )
+                                            Text(text = scenario.label)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Connection Mode",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    NetworkConnectionModeUi.entries.forEach { mode ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(
+                                                selected = selectedNetworkConnectionMode == mode,
+                                                onClick = { selectedNetworkConnectionMode = mode },
+                                                enabled = !isCollecting
+                                            )
+                                            Text(text = mode.label)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = "Workers=${selectedNetworkConnectionMode.concurrency}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = networkDownloadUrlInput,
+                                    onValueChange = { networkDownloadUrlInput = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Download URL") },
+                                    enabled = !isCollecting
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = networkUploadUrlInput,
+                                    onValueChange = { networkUploadUrlInput = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Upload URL") },
+                                    enabled = !isCollecting
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = networkBurstUrlInput,
+                                    onValueChange = { networkBurstUrlInput = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Burst URL") },
+                                    enabled = !isCollecting
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(text = "Enable Retry")
+                                    Switch(
+                                        checked = networkRetryEnabled,
+                                        onCheckedChange = { networkRetryEnabled = it },
+                                        enabled = !isCollecting
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = networkMaxRetryCountInput,
+                                    onValueChange = { input ->
+                                        networkMaxRetryCountInput = input.filter { it.isDigit() }.take(2)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Max Retry Count") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    enabled = !isCollecting
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = networkUploadChunkKbInput,
+                                    onValueChange = { input ->
+                                        networkUploadChunkKbInput = input.filter { it.isDigit() }.take(5)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Upload Chunk KB") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    enabled = !isCollecting
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = networkBurstIntervalMsInput,
+                                    onValueChange = { input ->
+                                        networkBurstIntervalMsInput = input.filter { it.isDigit() }.take(6)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Burst Interval ms") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    enabled = !isCollecting
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        attemptStartCollection(
+                                            highPowerEnabled = false,
+                                            networkLoadEnabled = true,
+                                            networkScenario = selectedNetworkScenario,
+                                            networkConnectionMode = selectedNetworkConnectionMode,
+                                            onNeedNotificationPermission = {
+                                                notificationPermissionLauncher.launch(
+                                                    Manifest.permission.POST_NOTIFICATIONS
+                                                )
+                                            }
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !isCollecting
+                                ) {
+                                    Text("Start Network Power Collection")
                                 }
                             }
                         }
@@ -525,6 +721,15 @@ class MainActivity : ComponentActivity() {
         enforceBrightnessEnabled = config.enforceBrightness
         keepScreenOnEnabled = config.keepScreenOn
         selectedCpuStressLevel = CpuStressLevel.fromConfig(config)
+        selectedNetworkScenario = NetworkScenarioUi.fromConfig(config)
+        selectedNetworkConnectionMode = NetworkConnectionModeUi.fromConfig(config)
+        networkRetryEnabled = config.networkRetryEnabled
+        networkMaxRetryCountInput = config.networkMaxRetryCount.toString()
+        networkDownloadUrlInput = config.networkDownloadUrl
+        networkUploadUrlInput = config.networkUploadUrl
+        networkBurstUrlInput = config.networkBurstUrl
+        networkUploadChunkKbInput = (config.networkUploadChunkBytes / 1024).toString()
+        networkBurstIntervalMsInput = config.networkBurstIntervalMs.toString()
     }
 
     private fun refreshPreflightChecks() {
@@ -573,10 +778,21 @@ class MainActivity : ComponentActivity() {
 
     private fun buildConfigFromInputs(
         highPowerEnabled: Boolean = false,
-        stressLevel: CpuStressLevel = selectedCpuStressLevel
+        stressLevel: CpuStressLevel = selectedCpuStressLevel,
+        networkLoadEnabled: Boolean = false,
+        networkScenario: NetworkScenarioUi = selectedNetworkScenario,
+        networkConnectionMode: NetworkConnectionModeUi = selectedNetworkConnectionMode
     ): CollectionConfig {
         val brightness = brightnessTargetInput.toIntOrNull()?.coerceIn(0, 255)
             ?: DEFAULT_BRIGHTNESS_TARGET
+        val uploadChunkBytes = (networkUploadChunkKbInput.toIntOrNull() ?: (DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES / 1024))
+            .coerceAtLeast(1) * 1024
+        val burstIntervalMs = networkBurstIntervalMsInput.toLongOrNull()
+            ?.coerceAtLeast(50L)
+            ?: DEFAULT_NETWORK_BURST_INTERVAL_MS
+        val maxRetryCount = networkMaxRetryCountInput.toIntOrNull()
+            ?.coerceAtLeast(0)
+            ?: DEFAULT_NETWORK_MAX_RETRY_COUNT
 
         return CollectionConfig(
             intervalMs = intervalMs,
@@ -590,6 +806,33 @@ class MainActivity : ComponentActivity() {
                 stressLevel.dutyPercent
             } else {
                 DEFAULT_CPU_STRESS_DUTY_PERCENT
+            },
+            networkLoadEnabled = networkLoadEnabled,
+            networkScenario = if (networkLoadEnabled) {
+                networkScenario.configValue
+            } else {
+                NETWORK_SCENARIO_DOWNLOAD_LOOP
+            },
+            networkConnectionMode = if (networkLoadEnabled) {
+                networkConnectionMode.configValue
+            } else {
+                NETWORK_CONNECTION_SINGLE
+            },
+            networkConcurrency = if (networkLoadEnabled) networkConnectionMode.concurrency else 1,
+            networkRetryEnabled = if (networkLoadEnabled) networkRetryEnabled else true,
+            networkMaxRetryCount = if (networkLoadEnabled) maxRetryCount else DEFAULT_NETWORK_MAX_RETRY_COUNT,
+            networkDownloadUrl = networkDownloadUrlInput.trim(),
+            networkUploadUrl = networkUploadUrlInput.trim(),
+            networkBurstUrl = networkBurstUrlInput.trim(),
+            networkUploadChunkBytes = if (networkLoadEnabled) {
+                uploadChunkBytes
+            } else {
+                DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES
+            },
+            networkBurstIntervalMs = if (networkLoadEnabled) {
+                burstIntervalMs
+            } else {
+                DEFAULT_NETWORK_BURST_INTERVAL_MS
             }
         )
     }
@@ -660,6 +903,28 @@ class MainActivity : ComponentActivity() {
             PreflightCheckItem.warn("常亮策略", "未启用常亮，实验中更容易熄屏")
         }
 
+        if (config.networkLoadEnabled) {
+            val relevantUrl = when (config.networkScenario) {
+                NETWORK_SCENARIO_DOWNLOAD_LOOP -> config.networkDownloadUrl
+                NETWORK_SCENARIO_UPLOAD_LOOP -> config.networkUploadUrl
+                NETWORK_SCENARIO_SMALL_REQUEST_BURST -> config.networkBurstUrl
+                else -> ""
+            }
+
+            items += if (relevantUrl.isBlank()) {
+                PreflightCheckItem.block("缃戠粶 URL", "褰撳墠缃戠粶妯″紡闇€瑕?URL")
+            } else if (!isLikelyHttpUrl(relevantUrl)) {
+                PreflightCheckItem.block("缃戠粶 URL", "璇蜂娇鐢?http:// 鎴?https://")
+            } else {
+                PreflightCheckItem.pass("缃戠粶 URL", relevantUrl)
+            }
+
+            items += PreflightCheckItem.pass(
+                "缃戠粶浠诲姟",
+                "scenario=${config.networkScenario}, workers=${config.networkConcurrency}, retry=${config.networkRetryEnabled}"
+            )
+        }
+
         return PreflightReport(items)
     }
 
@@ -679,6 +944,38 @@ class MainActivity : ComponentActivity() {
                 BatteryCollectService.EXTRA_CPU_STRESS_DUTY_PERCENT,
                 config.cpuStressDutyPercent
             )
+            putExtra(BatteryCollectService.EXTRA_NETWORK_LOAD_ENABLED, config.networkLoadEnabled)
+            putExtra(BatteryCollectService.EXTRA_NETWORK_SCENARIO, config.networkScenario)
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_CONNECTION_MODE,
+                config.networkConnectionMode
+            )
+            putExtra(BatteryCollectService.EXTRA_NETWORK_CONCURRENCY, config.networkConcurrency)
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_RETRY_ENABLED,
+                config.networkRetryEnabled
+            )
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_MAX_RETRY_COUNT,
+                config.networkMaxRetryCount
+            )
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_DOWNLOAD_URL,
+                config.networkDownloadUrl
+            )
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_UPLOAD_URL,
+                config.networkUploadUrl
+            )
+            putExtra(BatteryCollectService.EXTRA_NETWORK_BURST_URL, config.networkBurstUrl)
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_UPLOAD_CHUNK_BYTES,
+                config.networkUploadChunkBytes
+            )
+            putExtra(
+                BatteryCollectService.EXTRA_NETWORK_BURST_INTERVAL_MS,
+                config.networkBurstIntervalMs
+            )
         }
 
         ContextCompat.startForegroundService(this, startIntent)
@@ -692,6 +989,9 @@ class MainActivity : ComponentActivity() {
     private fun attemptStartCollection(
         highPowerEnabled: Boolean,
         stressLevel: CpuStressLevel = selectedCpuStressLevel,
+        networkLoadEnabled: Boolean = false,
+        networkScenario: NetworkScenarioUi = selectedNetworkScenario,
+        networkConnectionMode: NetworkConnectionModeUi = selectedNetworkConnectionMode,
         onNeedNotificationPermission: () -> Unit
     ) {
         val ready = ensurePermissionsBeforeStart(onNeedNotificationPermission)
@@ -702,7 +1002,10 @@ class MainActivity : ComponentActivity() {
 
         val config = buildConfigFromInputs(
             highPowerEnabled = highPowerEnabled,
-            stressLevel = stressLevel
+            stressLevel = stressLevel,
+            networkLoadEnabled = networkLoadEnabled,
+            networkScenario = networkScenario,
+            networkConnectionMode = networkConnectionMode
         )
         val report = evaluatePreflightChecks(config)
         preflightChecks = report.items
@@ -720,6 +1023,11 @@ class MainActivity : ComponentActivity() {
         }
 
         startCollection(config)
+    }
+
+    private fun isLikelyHttpUrl(value: String): Boolean {
+        val normalized = value.trim().lowercase(Locale.US)
+        return normalized.startsWith("http://") || normalized.startsWith("https://")
     }
 
     private fun stopCollection() {
