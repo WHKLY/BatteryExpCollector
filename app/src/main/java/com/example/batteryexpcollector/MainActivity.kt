@@ -58,6 +58,25 @@ import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
+    private enum class CpuStressLevel(
+        val label: String,
+        val threadCount: Int,
+        val dutyPercent: Int
+    ) {
+        MEDIUM("Medium", 2, 65),
+        HIGH("High", 0, 85),
+        EXTREME("Extreme", 0, 100);
+
+        companion object {
+            fun fromConfig(config: CollectionConfig): CpuStressLevel {
+                return entries.firstOrNull { level ->
+                    level.threadCount == config.cpuStressThreads &&
+                            level.dutyPercent == config.cpuStressDutyPercent
+                } ?: HIGH
+            }
+        }
+    }
+
     private var isCollecting by mutableStateOf(false)
     private var currentFilePath by mutableStateOf("")
     private var lastFilePath by mutableStateOf("")
@@ -71,6 +90,7 @@ class MainActivity : ComponentActivity() {
     private var brightnessTargetInput by mutableStateOf(DEFAULT_BRIGHTNESS_TARGET.toString())
     private var enforceBrightnessEnabled by mutableStateOf(true)
     private var keepScreenOnEnabled by mutableStateOf(true)
+    private var selectedCpuStressLevel by mutableStateOf(CpuStressLevel.HIGH)
     private var eventMarkerInput by mutableStateOf("")
 
     private var preflightChecks by mutableStateOf<List<PreflightCheckItem>>(emptyList())
@@ -119,6 +139,59 @@ class MainActivity : ComponentActivity() {
                             text = "BatteryExpCollector 实验采集端",
                             style = MaterialTheme.typography.headlineSmall
                         )
+
+                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "CPU High Power",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Stress Level",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CpuStressLevel.entries.forEach { level ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            RadioButton(
+                                                selected = selectedCpuStressLevel == level,
+                                                onClick = { selectedCpuStressLevel = level },
+                                                enabled = !isCollecting
+                                            )
+                                            Text(text = level.label)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = "Threads=${
+                                        if (selectedCpuStressLevel.threadCount == 0) "Auto"
+                                        else selectedCpuStressLevel.threadCount.toString()
+                                    }, duty=${selectedCpuStressLevel.dutyPercent}%",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        attemptStartCollection(
+                                            highPowerEnabled = true,
+                                            stressLevel = selectedCpuStressLevel,
+                                            onNeedNotificationPermission = {
+                                                notificationPermissionLauncher.launch(
+                                                    Manifest.permission.POST_NOTIFICATIONS
+                                                )
+                                            }
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !isCollecting
+                                ) {
+                                    Text("Start High Power Collection")
+                                }
+                            }
+                        }
 
                         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -451,6 +524,7 @@ class MainActivity : ComponentActivity() {
         brightnessTargetInput = config.brightnessTarget.toString()
         enforceBrightnessEnabled = config.enforceBrightness
         keepScreenOnEnabled = config.keepScreenOn
+        selectedCpuStressLevel = CpuStressLevel.fromConfig(config)
     }
 
     private fun refreshPreflightChecks() {
@@ -497,7 +571,10 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
-    private fun buildConfigFromInputs(): CollectionConfig {
+    private fun buildConfigFromInputs(
+        highPowerEnabled: Boolean = false,
+        stressLevel: CpuStressLevel = selectedCpuStressLevel
+    ): CollectionConfig {
         val brightness = brightnessTargetInput.toIntOrNull()?.coerceIn(0, 255)
             ?: DEFAULT_BRIGHTNESS_TARGET
 
@@ -506,7 +583,14 @@ class MainActivity : ComponentActivity() {
             experimentNote = noteInput.trim(),
             brightnessTarget = brightness,
             enforceBrightness = enforceBrightnessEnabled,
-            keepScreenOn = keepScreenOnEnabled
+            keepScreenOn = keepScreenOnEnabled,
+            highPowerEnabled = highPowerEnabled,
+            cpuStressThreads = if (highPowerEnabled) stressLevel.threadCount else 0,
+            cpuStressDutyPercent = if (highPowerEnabled) {
+                stressLevel.dutyPercent
+            } else {
+                DEFAULT_CPU_STRESS_DUTY_PERCENT
+            }
         )
     }
 
@@ -589,6 +673,12 @@ class MainActivity : ComponentActivity() {
             putExtra(BatteryCollectService.EXTRA_BRIGHTNESS_TARGET, config.brightnessTarget)
             putExtra(BatteryCollectService.EXTRA_ENFORCE_BRIGHTNESS, config.enforceBrightness)
             putExtra(BatteryCollectService.EXTRA_KEEP_SCREEN_ON, config.keepScreenOn)
+            putExtra(BatteryCollectService.EXTRA_HIGH_POWER_ENABLED, config.highPowerEnabled)
+            putExtra(BatteryCollectService.EXTRA_CPU_STRESS_THREADS, config.cpuStressThreads)
+            putExtra(
+                BatteryCollectService.EXTRA_CPU_STRESS_DUTY_PERCENT,
+                config.cpuStressDutyPercent
+            )
         }
 
         ContextCompat.startForegroundService(this, startIntent)
@@ -597,6 +687,39 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "采集启动请求已发送", Toast.LENGTH_SHORT).show()
 
         uiHandler.postDelayed({ refreshUiStateFromPrefs() }, 600L)
+    }
+
+    private fun attemptStartCollection(
+        highPowerEnabled: Boolean,
+        stressLevel: CpuStressLevel = selectedCpuStressLevel,
+        onNeedNotificationPermission: () -> Unit
+    ) {
+        val ready = ensurePermissionsBeforeStart(onNeedNotificationPermission)
+        if (!ready) {
+            refreshPreflightChecks()
+            return
+        }
+
+        val config = buildConfigFromInputs(
+            highPowerEnabled = highPowerEnabled,
+            stressLevel = stressLevel
+        )
+        val report = evaluatePreflightChecks(config)
+        preflightChecks = report.items
+
+        if (report.hasBlockers) {
+            Toast.makeText(
+                this,
+                "瀛樺湪闃绘椤癸紝璇峰厛澶勭悊鑷闈㈡澘涓殑闂",
+                Toast.LENGTH_LONG
+            ).show()
+            if (!preflightExpanded) {
+                preflightExpanded = true
+            }
+            return
+        }
+
+        startCollection(config)
     }
 
     private fun stopCollection() {
