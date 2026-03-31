@@ -1,4 +1,4 @@
-package com.example.batteryexpcollector
+﻿package com.example.batteryexpcollector
 
 import android.Manifest
 import android.content.Intent
@@ -18,35 +18,49 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -54,60 +68,88 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+private val AccentBlue = Color(0xFF2D5674)
+private val AccentBlueSoft = Color(0xFFEAF1F5)
+private val AppBackground = Color(0xFFF7F9FB)
+private val CardBackground = Color(0xFFFFFFFF)
+private val BorderColor = Color(0xFFD7E0E7)
+private val PrimaryText = Color(0xFF1F2A33)
+private val SecondaryText = Color(0xFF5B6975)
+
+private enum class ExperimentMode(
+    val label: String,
+    val description: String
+) {
+    STANDARD("Standard", "Battery collection only."),
+    CPU_HIGH_POWER("CPU High Power", "Adds CPU stress while collecting battery data."),
+    NETWORK_POWER("Network Power", "Runs configurable network traffic during collection.");
+
+    companion object {
+        fun fromConfig(config: CollectionConfig): ExperimentMode {
+            return when {
+                config.networkLoadEnabled -> NETWORK_POWER
+                config.highPowerEnabled -> CPU_HIGH_POWER
+                else -> STANDARD
+            }
+        }
+    }
+}
+
+private enum class CpuStressLevel(
+    val label: String,
+    val threadCount: Int,
+    val dutyPercent: Int
+) {
+    MEDIUM("Medium", 2, 65),
+    HIGH("High", 0, 85),
+    EXTREME("Extreme", 0, 100);
+
+    companion object {
+        fun fromConfig(config: CollectionConfig): CpuStressLevel {
+            return entries.firstOrNull { level ->
+                level.threadCount == config.cpuStressThreads &&
+                    level.dutyPercent == config.cpuStressDutyPercent
+            } ?: HIGH
+        }
+    }
+}
+
+private enum class NetworkScenarioUi(
+    val label: String,
+    val configValue: String
+) {
+    DOWNLOAD_LOOP("Download Loop", NETWORK_SCENARIO_DOWNLOAD_LOOP),
+    UPLOAD_LOOP("Upload Loop", NETWORK_SCENARIO_UPLOAD_LOOP),
+    SMALL_REQUEST_BURST("Small Request Burst", NETWORK_SCENARIO_SMALL_REQUEST_BURST);
+
+    companion object {
+        fun fromConfig(config: CollectionConfig): NetworkScenarioUi {
+            return entries.firstOrNull { it.configValue == config.networkScenario }
+                ?: DOWNLOAD_LOOP
+        }
+    }
+}
+
+private enum class NetworkConnectionModeUi(
+    val label: String,
+    val configValue: String,
+    val concurrency: Int
+) {
+    SINGLE("Single", NETWORK_CONNECTION_SINGLE, 1),
+    MULTI("Multi", NETWORK_CONNECTION_MULTI, DEFAULT_NETWORK_MULTI_CONCURRENCY);
+
+    companion object {
+        fun fromConfig(config: CollectionConfig): NetworkConnectionModeUi {
+            return entries.firstOrNull { it.configValue == config.networkConnectionMode }
+                ?: SINGLE
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
-
-    private enum class CpuStressLevel(
-        val label: String,
-        val threadCount: Int,
-        val dutyPercent: Int
-    ) {
-        MEDIUM("Medium", 2, 65),
-        HIGH("High", 0, 85),
-        EXTREME("Extreme", 0, 100);
-
-        companion object {
-            fun fromConfig(config: CollectionConfig): CpuStressLevel {
-                return entries.firstOrNull { level ->
-                    level.threadCount == config.cpuStressThreads &&
-                            level.dutyPercent == config.cpuStressDutyPercent
-                } ?: HIGH
-            }
-        }
-    }
-
-    private enum class NetworkScenarioUi(
-        val label: String,
-        val configValue: String
-    ) {
-        DOWNLOAD_LOOP("Download Loop", NETWORK_SCENARIO_DOWNLOAD_LOOP),
-        UPLOAD_LOOP("Upload Loop", NETWORK_SCENARIO_UPLOAD_LOOP),
-        SMALL_REQUEST_BURST("Small Request Burst", NETWORK_SCENARIO_SMALL_REQUEST_BURST);
-
-        companion object {
-            fun fromConfig(config: CollectionConfig): NetworkScenarioUi {
-                return entries.firstOrNull { it.configValue == config.networkScenario }
-                    ?: DOWNLOAD_LOOP
-            }
-        }
-    }
-
-    private enum class NetworkConnectionModeUi(
-        val label: String,
-        val configValue: String,
-        val concurrency: Int
-    ) {
-        SINGLE("Single", NETWORK_CONNECTION_SINGLE, 1),
-        MULTI("Multi", NETWORK_CONNECTION_MULTI, DEFAULT_NETWORK_MULTI_CONCURRENCY);
-
-        companion object {
-            fun fromConfig(config: CollectionConfig): NetworkConnectionModeUi {
-                return entries.firstOrNull { it.configValue == config.networkConnectionMode }
-                    ?: SINGLE
-            }
-        }
-    }
 
     private var isCollecting by mutableStateOf(false)
     private var currentFilePath by mutableStateOf("")
@@ -122,6 +164,7 @@ class MainActivity : ComponentActivity() {
     private var brightnessTargetInput by mutableStateOf(DEFAULT_BRIGHTNESS_TARGET.toString())
     private var enforceBrightnessEnabled by mutableStateOf(true)
     private var keepScreenOnEnabled by mutableStateOf(true)
+    private var selectedExperimentMode by mutableStateOf(ExperimentMode.STANDARD)
     private var selectedCpuStressLevel by mutableStateOf(CpuStressLevel.HIGH)
     private var selectedNetworkScenario by mutableStateOf(NetworkScenarioUi.DOWNLOAD_LOOP)
     private var selectedNetworkConnectionMode by mutableStateOf(NetworkConnectionModeUi.SINGLE)
@@ -157,523 +200,194 @@ class MainActivity : ComponentActivity() {
         refreshUiStateFromPrefs()
 
         setContent {
-            val scrollState = rememberScrollState()
+            val pagerState = rememberPagerState(pageCount = { 2 })
+            val coroutineScope = rememberCoroutineScope()
             val notificationPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission(),
                 onResult = { granted ->
                     notificationPermissionGranted = granted || hasNotificationPermission()
-                    if (notificationPermissionGranted) {
-                        Toast.makeText(this@MainActivity, "通知权限已获取，可以开始采集", Toast.LENGTH_SHORT).show()
+                    val message = if (notificationPermissionGranted) {
+                        "Notification permission granted."
                     } else {
-                        Toast.makeText(this@MainActivity, "通知权限未授权，前台服务通知可能无法正常显示", Toast.LENGTH_LONG).show()
+                        "Notification permission denied. Foreground service notices may be hidden."
                     }
+                    Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                     refreshUiStateFromPrefs()
                 }
             )
 
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Column(
+                Scaffold(
+                    containerColor = AppBackground,
+                    topBar = {
+                        Surface(color = AppBackground) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 12.dp)
+                            ) {
+                                Text(
+                                    text = "Battery Experiment Collector",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = AccentBlue,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Swipe or use the bottom switcher to move between Monitor and Configuration.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SecondaryText
+                                )
+                            }
+                        }
+                    },
+                    bottomBar = {
+                        BottomPagerSwitcher(
+                            currentPage = pagerState.currentPage,
+                            onPageSelected = { page ->
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(page)
+                                }
+                            }
+                        )
+                    }
+                ) { innerPadding ->
+                    HorizontalPager(
+                        state = pagerState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .verticalScroll(scrollState)
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = "BatteryExpCollector 实验采集端",
-                            style = MaterialTheme.typography.headlineSmall
-                        )
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "CPU High Power",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Stress Level",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CpuStressLevel.entries.forEach { level ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            RadioButton(
-                                                selected = selectedCpuStressLevel == level,
-                                                onClick = { selectedCpuStressLevel = level },
-                                                enabled = !isCollecting
-                                            )
-                                            Text(text = level.label)
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                        }
-                                    }
-                                }
-                                Text(
-                                    text = "Threads=${
-                                        if (selectedCpuStressLevel.threadCount == 0) "Auto"
-                                        else selectedCpuStressLevel.threadCount.toString()
-                                    }, duty=${selectedCpuStressLevel.dutyPercent}%",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Button(
-                                    onClick = {
-                                        attemptStartCollection(
-                                            highPowerEnabled = true,
-                                            stressLevel = selectedCpuStressLevel,
-                                            onNeedNotificationPermission = {
-                                                notificationPermissionLauncher.launch(
-                                                    Manifest.permission.POST_NOTIFICATIONS
-                                                )
-                                            }
+                            .padding(innerPadding)
+                    ) { page ->
+                            when (page) {
+                                0 -> MonitorPage(
+                                    isCollecting = isCollecting,
+                                    selectedExperimentMode = selectedExperimentMode,
+                                    latestSample = latestSample,
+                                    currentFilePath = currentFilePath,
+                                    lastFilePath = lastFilePath,
+                                    notificationPermissionGranted = notificationPermissionGranted,
+                                    writeSettingsGranted = writeSettingsGranted,
+                                    preflightChecks = preflightChecks,
+                                    preflightExpanded = preflightExpanded,
+                                    onTogglePreflight = { preflightExpanded = !preflightExpanded },
+                                    deviceStatusExpanded = deviceStatusExpanded,
+                                    onToggleDeviceStatus = { deviceStatusExpanded = !deviceStatusExpanded },
+                                    eventMarkerInput = eventMarkerInput,
+                                    onEventMarkerChange = { eventMarkerInput = it },
+                                    onRefreshPreflight = { refreshPreflightChecks() },
+                                    onOpenWriteSettings = { openWriteSettingsPage() },
+                                    onRequestNotificationPermission = {
+                                        notificationPermissionLauncher.launch(
+                                            Manifest.permission.POST_NOTIFICATIONS
                                         )
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    enabled = !isCollecting
-                                ) {
-                                    Text("Start High Power Collection")
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "Network Power",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Text(
-                                    text = "Scenario",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    NetworkScenarioUi.entries.forEach { scenario ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            RadioButton(
-                                                selected = selectedNetworkScenario == scenario,
-                                                onClick = { selectedNetworkScenario = scenario },
-                                                enabled = !isCollecting
+                                    onStartCollection = {
+                                        startSelectedCollection {
+                                            notificationPermissionLauncher.launch(
+                                                Manifest.permission.POST_NOTIFICATIONS
                                             )
-                                            Text(text = scenario.label)
-                                            Spacer(modifier = Modifier.width(8.dp))
                                         }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Connection Mode",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    NetworkConnectionModeUi.entries.forEach { mode ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            RadioButton(
-                                                selected = selectedNetworkConnectionMode == mode,
-                                                onClick = { selectedNetworkConnectionMode = mode },
-                                                enabled = !isCollecting
-                                            )
-                                            Text(text = mode.label)
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                        }
-                                    }
-                                }
-                                Text(
-                                    text = "Workers=${selectedNetworkConnectionMode.concurrency}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = networkDownloadUrlInput,
-                                    onValueChange = { networkDownloadUrlInput = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Download URL") },
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = networkUploadUrlInput,
-                                    onValueChange = { networkUploadUrlInput = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Upload URL") },
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = networkBurstUrlInput,
-                                    onValueChange = { networkBurstUrlInput = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Burst URL") },
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(text = "Enable Retry")
-                                    Switch(
-                                        checked = networkRetryEnabled,
-                                        onCheckedChange = { networkRetryEnabled = it },
-                                        enabled = !isCollecting
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = networkMaxRetryCountInput,
-                                    onValueChange = { input ->
-                                        networkMaxRetryCountInput = input.filter { it.isDigit() }.take(2)
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Max Retry Count") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = networkUploadChunkKbInput,
-                                    onValueChange = { input ->
-                                        networkUploadChunkKbInput = input.filter { it.isDigit() }.take(5)
+                                    onStopCollection = { stopCollection() },
+                                    onSubmitMarker = {
+                                        val marker = eventMarkerInput.trim()
+                                        if (marker.isBlank()) {
+                                            Toast.makeText(
+                                                this@MainActivity,
+                                                "Marker text cannot be empty.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            sendEventMarker(marker)
+                                            eventMarkerInput = ""
+                                        }
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Upload Chunk KB") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    enabled = !isCollecting
+                                    deviceStatusSummary = buildDeviceStatusSummary()
                                 )
 
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = networkBurstIntervalMsInput,
-                                    onValueChange = { input ->
-                                        networkBurstIntervalMsInput = input.filter { it.isDigit() }.take(6)
+                                1 -> ConfigurationPage(
+                                    isCollecting = isCollecting,
+                                    selectedExperimentMode = selectedExperimentMode,
+                                    onExperimentModeSelected = { mode ->
+                                        selectedExperimentMode = mode
+                                        refreshPreflightChecks()
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Burst Interval ms") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Button(
-                                    onClick = {
-                                        attemptStartCollection(
-                                            highPowerEnabled = false,
-                                            networkLoadEnabled = true,
-                                            networkScenario = selectedNetworkScenario,
-                                            networkConnectionMode = selectedNetworkConnectionMode,
-                                            onNeedNotificationPermission = {
-                                                notificationPermissionLauncher.launch(
-                                                    Manifest.permission.POST_NOTIFICATIONS
-                                                )
-                                            }
-                                        )
+                                    intervalMs = intervalMs,
+                                    onIntervalSelected = { option ->
+                                        intervalMs = option
+                                        refreshPreflightChecks()
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    enabled = !isCollecting
-                                ) {
-                                    Text("Start Network Power Collection")
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                CollapsibleCardHeader(
-                                    title = "设备状态",
-                                    expanded = deviceStatusExpanded,
-                                    summary = buildDeviceStatusSummary(),
-                                    onToggle = { deviceStatusExpanded = !deviceStatusExpanded }
-                                )
-
-                                AnimatedVisibility(visible = deviceStatusExpanded) {
-                                    Column {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = if (isCollecting) "状态：采集中" else "状态：空闲",
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(text = "设备：${Build.MANUFACTURER} ${Build.MODEL}")
-                                        Text(text = "通知权限：${if (notificationPermissionGranted) "已授权" else "未授权"}")
-                                        Text(text = "修改系统设置权限：${if (writeSettingsGranted) "已授权" else "未授权"}")
-                                        Text(text = "数据目录：${SharedResultsStore.RESULTS_DIRECTORY_LABEL}")
-
-                                        if (currentFilePath.isNotBlank()) {
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Text(text = "当前文件：$currentFilePath")
-                                        } else if (lastFilePath.isNotBlank()) {
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Text(text = "最近文件：$lastFilePath")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                val blockCount = preflightChecks.count { it.level == CheckLevel.BLOCK }
-                                val warnCount = preflightChecks.count { it.level == CheckLevel.WARN }
-
-                                CollapsibleCardHeader(
-                                    title = "开始前自检",
-                                    expanded = preflightExpanded,
-                                    summary = "阻止项：$blockCount，警告项：$warnCount",
-                                    onToggle = { preflightExpanded = !preflightExpanded }
-                                )
-
-                                AnimatedVisibility(visible = preflightExpanded) {
-                                    Column {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(text = "阻止项：$blockCount，警告项：$warnCount")
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        preflightChecks.forEach { item ->
-                                            val color = when (item.level) {
-                                                CheckLevel.PASS -> MaterialTheme.colorScheme.onSurface
-                                                CheckLevel.WARN -> MaterialTheme.colorScheme.tertiary
-                                                CheckLevel.BLOCK -> MaterialTheme.colorScheme.error
-                                            }
-                                            Text(text = "${item.level.label} ${item.title}：${item.detail}", color = color)
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                        }
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Button(
-                                            onClick = { refreshPreflightChecks() },
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text("刷新自检")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(text = "运行中状态面板", style = MaterialTheme.typography.titleMedium)
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                if (latestSample.timestampMillis > 0L) {
-                                    Text(text = "最近写入时间：${formatTimestamp(latestSample.timestampMillis)}")
-                                    Text(text = "已运行：${latestSample.elapsedSec} s")
-                                    Text(text = "SOC：${latestSample.socInteger?.toString() ?: "N/A"}")
-                                    Text(
-                                        text = "电池温度：${latestSample.batteryTempC?.let { String.format(Locale.US, "%.2f °C", it) } ?: "N/A"}"
-                                    )
-                                    Text(text = "电流：${latestSample.currentUa?.toString() ?: "N/A"} uA")
-                                    Text(text = "亮度：${latestSample.brightness?.toString() ?: "N/A"}")
-                                    Text(
-                                        text = "屏幕状态：${when (latestSample.screenOn) {
-                                            true -> "亮屏"
-                                            false -> "熄屏"
-                                            null -> "N/A"
-                                        }}"
-                                    )
-                                    Text(text = "网络类型：${latestSample.netType.ifBlank { "N/A" }}")
-                                    Text(
-                                        text = "采样文件：${latestSample.currentFilePath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "N/A"}"
-                                    )
-                                } else {
-                                    Text(text = "暂无采样快照")
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(text = "实验配置", style = MaterialTheme.typography.titleMedium)
-
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(text = "采样间隔")
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    listOf(500L, 1000L, 2000L).forEach { option ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            RadioButton(
-                                                selected = intervalMs == option,
-                                                onClick = {
-                                                    intervalMs = option
-                                                    refreshPreflightChecks()
-                                                }
-                                            )
-                                            Text(text = "${option} ms")
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = noteInput,
-                                    onValueChange = { noteInput = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("实验备注") },
-                                    placeholder = { Text("例如：25C_run01") },
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = brightnessTargetInput,
-                                    onValueChange = { input ->
+                                    noteInput = noteInput,
+                                    onNoteChange = { noteInput = it },
+                                    brightnessTargetInput = brightnessTargetInput,
+                                    onBrightnessTargetChange = { input ->
                                         brightnessTargetInput = input.filter { it.isDigit() }.take(3)
                                         refreshPreflightChecks()
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("目标亮度 (0-255)") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    enabled = !isCollecting
-                                )
-
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(text = "尝试锁定亮度")
-                                    Switch(
-                                        checked = enforceBrightnessEnabled,
-                                        onCheckedChange = {
-                                            enforceBrightnessEnabled = it
-                                            refreshPreflightChecks()
-                                        },
-                                        enabled = !isCollecting
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(text = "采集中保持屏幕常亮")
-                                    Switch(
-                                        checked = keepScreenOnEnabled,
-                                        onCheckedChange = {
-                                            keepScreenOnEnabled = it
-                                            updateKeepScreenOnFlag()
-                                            refreshPreflightChecks()
-                                        },
-                                        enabled = !isCollecting
-                                    )
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(text = "控制", style = MaterialTheme.typography.titleMedium)
-
-                                Spacer(modifier = Modifier.height(12.dp))
-                                if (!writeSettingsGranted) {
-                                    Button(
-                                        onClick = { openWriteSettingsPage() },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("去开启“修改系统设置”权限")
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                }
-
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationPermissionGranted) {
-                                    Button(
-                                        onClick = { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("申请通知权限")
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (isCollecting) {
-                                            stopCollection()
-                                        } else {
-                                            val ready = ensurePermissionsBeforeStart {
-                                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                            }
-                                            if (!ready) {
-                                                refreshPreflightChecks()
-                                                return@Button
-                                            }
-
-                                            val config = buildConfigFromInputs()
-                                            val report = evaluatePreflightChecks(config)
-                                            preflightChecks = report.items
-
-                                            if (report.hasBlockers) {
-                                                Toast.makeText(this@MainActivity, "存在阻止项，请先处理自检面板中的问题", Toast.LENGTH_LONG).show()
-                                                if (!preflightExpanded) {
-                                                    preflightExpanded = true
-                                                }
-                                                return@Button
-                                            }
-
-                                            startCollection(config)
-                                        }
+                                    enforceBrightnessEnabled = enforceBrightnessEnabled,
+                                    onEnforceBrightnessChanged = {
+                                        enforceBrightnessEnabled = it
+                                        refreshPreflightChecks()
                                     },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(if (isCollecting) "停止采集" else "开始采集")
-                                }
-                            }
-                        }
-
-                        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(text = "事件标记", style = MaterialTheme.typography.titleMedium)
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = eventMarkerInput,
-                                    onValueChange = { eventMarkerInput = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("事件内容") },
-                                    placeholder = { Text("例如：phase1_start") }
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Button(
-                                    onClick = {
-                                        val marker = eventMarkerInput.trim()
-                                        if (marker.isBlank()) {
-                                            Toast.makeText(this@MainActivity, "事件内容不能为空", Toast.LENGTH_SHORT).show()
-                                            return@Button
-                                        }
-                                        sendEventMarker(marker)
-                                        eventMarkerInput = ""
+                                    keepScreenOnEnabled = keepScreenOnEnabled,
+                                    onKeepScreenOnChanged = {
+                                        keepScreenOnEnabled = it
+                                        updateKeepScreenOnFlag()
+                                        refreshPreflightChecks()
                                     },
-                                    enabled = isCollecting,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("写入事件标记")
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "说明：常亮仅在本 App 保持前台时有效；正式实验时请不要切到后台或锁屏。",
-                                    style = MaterialTheme.typography.bodySmall
+                                    selectedCpuStressLevel = selectedCpuStressLevel,
+                                    onCpuStressLevelSelected = {
+                                        selectedCpuStressLevel = it
+                                        refreshPreflightChecks()
+                                    },
+                                    selectedNetworkScenario = selectedNetworkScenario,
+                                    onNetworkScenarioSelected = {
+                                        selectedNetworkScenario = it
+                                        refreshPreflightChecks()
+                                    },
+                                    selectedNetworkConnectionMode = selectedNetworkConnectionMode,
+                                    onNetworkConnectionModeSelected = {
+                                        selectedNetworkConnectionMode = it
+                                        refreshPreflightChecks()
+                                    },
+                                    networkRetryEnabled = networkRetryEnabled,
+                                    onNetworkRetryEnabledChanged = {
+                                        networkRetryEnabled = it
+                                        refreshPreflightChecks()
+                                    },
+                                    networkMaxRetryCountInput = networkMaxRetryCountInput,
+                                    onNetworkMaxRetryCountChange = { input ->
+                                        networkMaxRetryCountInput = input.filter { it.isDigit() }.take(2)
+                                        refreshPreflightChecks()
+                                    },
+                                    networkDownloadUrlInput = networkDownloadUrlInput,
+                                    onNetworkDownloadUrlChange = {
+                                        networkDownloadUrlInput = it
+                                        refreshPreflightChecks()
+                                    },
+                                    networkUploadUrlInput = networkUploadUrlInput,
+                                    onNetworkUploadUrlChange = {
+                                        networkUploadUrlInput = it
+                                        refreshPreflightChecks()
+                                    },
+                                    networkBurstUrlInput = networkBurstUrlInput,
+                                    onNetworkBurstUrlChange = {
+                                        networkBurstUrlInput = it
+                                        refreshPreflightChecks()
+                                    },
+                                    networkUploadChunkKbInput = networkUploadChunkKbInput,
+                                    onNetworkUploadChunkKbChange = { input ->
+                                        networkUploadChunkKbInput = input.filter { it.isDigit() }.take(5)
+                                        refreshPreflightChecks()
+                                    },
+                                    networkBurstIntervalMsInput = networkBurstIntervalMsInput,
+                                    onNetworkBurstIntervalMsChange = { input ->
+                                        networkBurstIntervalMsInput = input.filter { it.isDigit() }.take(6)
+                                        refreshPreflightChecks()
+                                    },
+                                    configurationSummary = buildConfigurationSummary(buildConfigForSelectedMode())
                                 )
                             }
                         }
-                    }
                 }
             }
         }
@@ -720,6 +434,7 @@ class MainActivity : ComponentActivity() {
         brightnessTargetInput = config.brightnessTarget.toString()
         enforceBrightnessEnabled = config.enforceBrightness
         keepScreenOnEnabled = config.keepScreenOn
+        selectedExperimentMode = ExperimentMode.fromConfig(config)
         selectedCpuStressLevel = CpuStressLevel.fromConfig(config)
         selectedNetworkScenario = NetworkScenarioUi.fromConfig(config)
         selectedNetworkConnectionMode = NetworkConnectionModeUi.fromConfig(config)
@@ -733,7 +448,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshPreflightChecks() {
-        preflightChecks = evaluatePreflightChecks(buildConfigFromInputs()).items
+        preflightChecks = evaluatePreflightChecks(buildConfigForSelectedMode()).items
     }
 
     private fun startUiRefreshLoop() {
@@ -747,7 +462,10 @@ class MainActivity : ComponentActivity() {
 
     private fun hasNotificationPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
         } else {
             true
         }
@@ -755,13 +473,18 @@ class MainActivity : ComponentActivity() {
 
     private fun ensurePermissionsBeforeStart(onNeedNotificationPermission: () -> Unit): Boolean {
         if (!hasNotificationPermission()) {
-            Toast.makeText(this, "请先授予通知权限", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Grant notification permission before starting.", Toast.LENGTH_SHORT)
+                .show()
             onNeedNotificationPermission()
             return false
         }
 
         if (!Settings.System.canWrite(this)) {
-            Toast.makeText(this, "请先授予“修改系统设置”权限", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Grant Modify System Settings permission before starting.",
+                Toast.LENGTH_LONG
+            ).show()
             openWriteSettingsPage()
             return false
         }
@@ -776,6 +499,22 @@ class MainActivity : ComponentActivity() {
         startActivity(intent)
     }
 
+    private fun buildConfigForSelectedMode(): CollectionConfig {
+        return when (selectedExperimentMode) {
+            ExperimentMode.STANDARD -> buildConfigFromInputs()
+            ExperimentMode.CPU_HIGH_POWER -> buildConfigFromInputs(
+                highPowerEnabled = true,
+                stressLevel = selectedCpuStressLevel
+            )
+            ExperimentMode.NETWORK_POWER -> buildConfigFromInputs(
+                highPowerEnabled = false,
+                networkLoadEnabled = true,
+                networkScenario = selectedNetworkScenario,
+                networkConnectionMode = selectedNetworkConnectionMode
+            )
+        }
+    }
+
     private fun buildConfigFromInputs(
         highPowerEnabled: Boolean = false,
         stressLevel: CpuStressLevel = selectedCpuStressLevel,
@@ -785,8 +524,9 @@ class MainActivity : ComponentActivity() {
     ): CollectionConfig {
         val brightness = brightnessTargetInput.toIntOrNull()?.coerceIn(0, 255)
             ?: DEFAULT_BRIGHTNESS_TARGET
-        val uploadChunkBytes = (networkUploadChunkKbInput.toIntOrNull() ?: (DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES / 1024))
-            .coerceAtLeast(1) * 1024
+        val uploadChunkBytes =
+            (networkUploadChunkKbInput.toIntOrNull()
+                ?: (DEFAULT_NETWORK_UPLOAD_CHUNK_BYTES / 1024)).coerceAtLeast(1) * 1024
         val burstIntervalMs = networkBurstIntervalMsInput.toLongOrNull()
             ?.coerceAtLeast(50L)
             ?: DEFAULT_NETWORK_BURST_INTERVAL_MS
@@ -820,7 +560,11 @@ class MainActivity : ComponentActivity() {
             },
             networkConcurrency = if (networkLoadEnabled) networkConnectionMode.concurrency else 1,
             networkRetryEnabled = if (networkLoadEnabled) networkRetryEnabled else true,
-            networkMaxRetryCount = if (networkLoadEnabled) maxRetryCount else DEFAULT_NETWORK_MAX_RETRY_COUNT,
+            networkMaxRetryCount = if (networkLoadEnabled) {
+                maxRetryCount
+            } else {
+                DEFAULT_NETWORK_MAX_RETRY_COUNT
+            },
             networkDownloadUrl = networkDownloadUrlInput.trim(),
             networkUploadUrl = networkUploadUrlInput.trim(),
             networkBurstUrl = networkBurstUrlInput.trim(),
@@ -841,40 +585,49 @@ class MainActivity : ComponentActivity() {
         val items = mutableListOf<PreflightCheckItem>()
 
         items += if (hasNotificationPermission()) {
-            PreflightCheckItem.pass("通知权限", "已授权")
+            PreflightCheckItem.pass("Notification Permission", "Granted")
         } else {
-            PreflightCheckItem.block("通知权限", "未授权")
+            PreflightCheckItem.block("Notification Permission", "Not granted")
         }
 
         items += if (Settings.System.canWrite(this)) {
-            PreflightCheckItem.pass("修改系统设置权限", "已授权")
+            PreflightCheckItem.pass("Modify System Settings", "Granted")
         } else {
-            PreflightCheckItem.block("修改系统设置权限", "未授权")
+            PreflightCheckItem.block("Modify System Settings", "Not granted")
         }
 
-        items += PreflightCheckItem.pass("数据目录", SharedResultsStore.RESULTS_DIRECTORY_LABEL)
+        items += PreflightCheckItem.pass("Results Directory", SharedResultsStore.RESULTS_DIRECTORY_LABEL)
 
         val brightnessModeItem = try {
             val mode = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE)
             if (mode == Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL) {
-                PreflightCheckItem.pass("自动亮度", "已关闭")
+                PreflightCheckItem.pass("Auto Brightness", "Disabled")
             } else {
-                PreflightCheckItem.warn("自动亮度", "仍为自动模式，建议关闭")
+                PreflightCheckItem.warn(
+                    "Auto Brightness",
+                    "Still enabled. Manual brightness is recommended for experiments."
+                )
             }
         } catch (_: Exception) {
-            PreflightCheckItem.warn("自动亮度", "无法读取")
+            PreflightCheckItem.warn("Auto Brightness", "Unable to read current state")
         }
         items += brightnessModeItem
 
         val brightnessItem = try {
             val currentBrightness = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
             if (abs(currentBrightness - config.brightnessTarget) <= 10) {
-                PreflightCheckItem.pass("当前亮度", "当前值 $currentBrightness，接近目标 ${config.brightnessTarget}")
+                PreflightCheckItem.pass(
+                    "Current Brightness",
+                    "Current value $currentBrightness is close to target ${config.brightnessTarget}"
+                )
             } else {
-                PreflightCheckItem.warn("当前亮度", "当前值 $currentBrightness，与目标 ${config.brightnessTarget} 偏差较大")
+                PreflightCheckItem.warn(
+                    "Current Brightness",
+                    "Current value $currentBrightness is far from target ${config.brightnessTarget}"
+                )
             }
         } catch (_: Exception) {
-            PreflightCheckItem.warn("当前亮度", "无法读取")
+            PreflightCheckItem.warn("Current Brightness", "Unable to read current value")
         }
         items += brightnessItem
 
@@ -886,21 +639,36 @@ class MainActivity : ComponentActivity() {
             plugged > 0
 
         items += if (charging) {
-            PreflightCheckItem.warn("充电状态", "当前处于充电/接电状态，建议拔掉充电线后开始")
+            PreflightCheckItem.warn(
+                "Charging State",
+                "Device is charging or plugged in. Unplug it for battery experiments."
+            )
         } else {
-            PreflightCheckItem.pass("充电状态", "当前未充电")
+            PreflightCheckItem.pass("Charging State", "Device is running on battery")
         }
 
         items += if (config.enforceBrightness) {
-            PreflightCheckItem.pass("亮度锁定策略", "开始采集后会持续尝试锁定亮度")
+            PreflightCheckItem.pass(
+                "Brightness Control",
+                "The app will try to keep the target brightness during collection"
+            )
         } else {
-            PreflightCheckItem.warn("亮度锁定策略", "已关闭强制亮度，实验中亮度可能漂移")
+            PreflightCheckItem.warn(
+                "Brightness Control",
+                "Brightness locking is disabled. Screen brightness may drift."
+            )
         }
 
         items += if (config.keepScreenOn) {
-            PreflightCheckItem.pass("常亮策略", "采集中会在前台请求常亮")
+            PreflightCheckItem.pass(
+                "Keep Screen Awake",
+                "The app will request the screen to stay on while collecting"
+            )
         } else {
-            PreflightCheckItem.warn("常亮策略", "未启用常亮，实验中更容易熄屏")
+            PreflightCheckItem.warn(
+                "Keep Screen Awake",
+                "Screen may turn off during the experiment"
+            )
         }
 
         if (config.networkLoadEnabled) {
@@ -912,16 +680,16 @@ class MainActivity : ComponentActivity() {
             }
 
             items += if (relevantUrl.isBlank()) {
-                PreflightCheckItem.block("缃戠粶 URL", "褰撳墠缃戠粶妯″紡闇€瑕?URL")
+                PreflightCheckItem.block("Network Target URL", "A URL is required for the selected scenario")
             } else if (!isLikelyHttpUrl(relevantUrl)) {
-                PreflightCheckItem.block("缃戠粶 URL", "璇蜂娇鐢?http:// 鎴?https://")
+                PreflightCheckItem.block("Network Target URL", "Use an http:// or https:// URL")
             } else {
-                PreflightCheckItem.pass("缃戠粶 URL", relevantUrl)
+                PreflightCheckItem.pass("Network Target URL", relevantUrl)
             }
 
             items += PreflightCheckItem.pass(
-                "缃戠粶浠诲姟",
-                "scenario=${config.networkScenario}, workers=${config.networkConcurrency}, retry=${config.networkRetryEnabled}"
+                "Network Load Setup",
+                "Scenario=${config.networkScenario}, workers=${config.networkConcurrency}, retry=${config.networkRetryEnabled}"
             )
         }
 
@@ -981,9 +749,30 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, startIntent)
         isCollecting = true
         updateKeepScreenOnFlag()
-        Toast.makeText(this, "采集启动请求已发送", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Collection start request sent.", Toast.LENGTH_SHORT).show()
 
         uiHandler.postDelayed({ refreshUiStateFromPrefs() }, 600L)
+    }
+
+    private fun startSelectedCollection(onNeedNotificationPermission: () -> Unit) {
+        when (selectedExperimentMode) {
+            ExperimentMode.STANDARD -> attemptStartCollection(
+                highPowerEnabled = false,
+                onNeedNotificationPermission = onNeedNotificationPermission
+            )
+            ExperimentMode.CPU_HIGH_POWER -> attemptStartCollection(
+                highPowerEnabled = true,
+                stressLevel = selectedCpuStressLevel,
+                onNeedNotificationPermission = onNeedNotificationPermission
+            )
+            ExperimentMode.NETWORK_POWER -> attemptStartCollection(
+                highPowerEnabled = false,
+                networkLoadEnabled = true,
+                networkScenario = selectedNetworkScenario,
+                networkConnectionMode = selectedNetworkConnectionMode,
+                onNeedNotificationPermission = onNeedNotificationPermission
+            )
+        }
     }
 
     private fun attemptStartCollection(
@@ -1013,7 +802,7 @@ class MainActivity : ComponentActivity() {
         if (report.hasBlockers) {
             Toast.makeText(
                 this,
-                "瀛樺湪闃绘椤癸紝璇峰厛澶勭悊鑷闈㈡澘涓殑闂",
+                "Resolve blocking preflight items before starting the experiment.",
                 Toast.LENGTH_LONG
             ).show()
             if (!preflightExpanded) {
@@ -1036,7 +825,7 @@ class MainActivity : ComponentActivity() {
         }
         startService(stopIntent)
 
-        Toast.makeText(this, "停止请求已发送", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Collection stop request sent.", Toast.LENGTH_SHORT).show()
         uiHandler.postDelayed({ refreshUiStateFromPrefs() }, 600L)
     }
 
@@ -1046,7 +835,7 @@ class MainActivity : ComponentActivity() {
             putExtra(BatteryCollectService.EXTRA_EVENT_MARKER, marker)
         }
         startService(markerIntent)
-        Toast.makeText(this, "事件标记已写入队列", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Event marker queued.", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateKeepScreenOnFlag() {
@@ -1058,19 +847,689 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun formatTimestamp(timeMillis: Long): String {
-        return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timeMillis))
-    }
-
     private fun buildDeviceStatusSummary(): String {
-        val statusText = if (isCollecting) "采集中" else "空闲"
+        val statusText = if (isCollecting) "Collecting" else "Idle"
         val fileName = when {
             currentFilePath.isNotBlank() -> File(currentFilePath).name
             lastFilePath.isNotBlank() -> File(lastFilePath).name
-            else -> "无"
+            else -> "No file"
         }
-        return "状态：$statusText，文件：$fileName"
+        return "Status: $statusText, File: $fileName"
     }
+
+    private fun buildConfigurationSummary(config: CollectionConfig): String {
+        val modeText = ExperimentMode.fromConfig(config).label
+        val baseSummary = buildString {
+            append("Mode: $modeText")
+            append("\nInterval: ${config.intervalMs} ms")
+            append("\nBrightness target: ${config.brightnessTarget}")
+            append("\nKeep screen awake: ${if (config.keepScreenOn) "On" else "Off"}")
+            append("\nBrightness control: ${if (config.enforceBrightness) "On" else "Off"}")
+        }
+
+        return when {
+            config.networkLoadEnabled -> {
+                val url = when (config.networkScenario) {
+                    NETWORK_SCENARIO_DOWNLOAD_LOOP -> config.networkDownloadUrl
+                    NETWORK_SCENARIO_UPLOAD_LOOP -> config.networkUploadUrl
+                    NETWORK_SCENARIO_SMALL_REQUEST_BURST -> config.networkBurstUrl
+                    else -> ""
+                }
+                "$baseSummary\nScenario: ${config.networkScenario}\nWorkers: ${config.networkConcurrency}\nTarget: ${url.ifBlank { "Not set" }}"
+            }
+            config.highPowerEnabled -> {
+                "$baseSummary\nCPU threads: ${if (config.cpuStressThreads == 0) "Auto" else config.cpuStressThreads}\nDuty: ${config.cpuStressDutyPercent}%"
+            }
+            else -> baseSummary
+        }
+    }
+}
+
+@Composable
+private fun MonitorPage(
+    isCollecting: Boolean,
+    selectedExperimentMode: ExperimentMode,
+    latestSample: LatestSampleSnapshot,
+    currentFilePath: String,
+    lastFilePath: String,
+    notificationPermissionGranted: Boolean,
+    writeSettingsGranted: Boolean,
+    preflightChecks: List<PreflightCheckItem>,
+    preflightExpanded: Boolean,
+    onTogglePreflight: () -> Unit,
+    deviceStatusExpanded: Boolean,
+    onToggleDeviceStatus: () -> Unit,
+    eventMarkerInput: String,
+    onEventMarkerChange: (String) -> Unit,
+    onRefreshPreflight: () -> Unit,
+    onOpenWriteSettings: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onStartCollection: () -> Unit,
+    onStopCollection: () -> Unit,
+    onSubmitMarker: () -> Unit,
+    deviceStatusSummary: String
+) {
+    val scrollState = rememberScrollState()
+    val blockCount = preflightChecks.count { it.level == CheckLevel.BLOCK }
+    val warnCount = preflightChecks.count { it.level == CheckLevel.WARN }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        AppSectionCard(title = "Execution Overview") {
+            DetailRow("Status", if (isCollecting) "Collecting" else "Idle")
+            DetailRow("Active Mode", selectedExperimentMode.label)
+            DetailRow(
+                "Current File",
+                when {
+                    currentFilePath.isNotBlank() -> File(currentFilePath).name
+                    lastFilePath.isNotBlank() -> File(lastFilePath).name
+                    else -> "No file yet"
+                }
+            )
+        }
+
+        AppSectionCard(
+            title = "Execution Control",
+            subtitle = "Start or stop collection with the currently selected experiment mode."
+        ) {
+            if (!writeSettingsGranted) {
+                Button(
+                    onClick = onOpenWriteSettings,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = primaryButtonColors()
+                ) {
+                    Text("Open Modify System Settings Permission")
+                }
+                SpacerLine()
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationPermissionGranted) {
+                Button(
+                    onClick = onRequestNotificationPermission,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = primaryButtonColors()
+                ) {
+                    Text("Request Notification Permission")
+                }
+                SpacerLine()
+            }
+
+            Button(
+                onClick = {
+                    if (isCollecting) onStopCollection() else onStartCollection()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = primaryButtonColors()
+            ) {
+                Text(if (isCollecting) "Stop Collection" else "Start ${selectedExperimentMode.label} Collection")
+            }
+        }
+
+        AppSectionCard(title = "Live Metrics") {
+            if (latestSample.timestampMillis > 0L) {
+                DetailRow("Last Sample Time", formatSnapshotTimestamp(latestSample.timestampMillis))
+                DetailRow("Elapsed Time", "${latestSample.elapsedSec} s")
+                DetailRow("Battery Level", latestSample.socInteger?.toString() ?: "N/A")
+                DetailRow(
+                    "Battery Temperature",
+                    latestSample.batteryTempC?.let { String.format(Locale.US, "%.2f degC", it) } ?: "N/A"
+                )
+                DetailRow("Current", latestSample.currentUa?.let { "$it uA" } ?: "N/A")
+                DetailRow("Brightness", latestSample.brightness?.toString() ?: "N/A")
+                DetailRow(
+                    "Screen State",
+                    when (latestSample.screenOn) {
+                        true -> "On"
+                        false -> "Off"
+                        null -> "N/A"
+                    }
+                )
+                DetailRow("Network Type", latestSample.netType.ifBlank { "N/A" })
+                DetailRow(
+                    "Sample File",
+                    latestSample.currentFilePath.takeIf { it.isNotBlank() }?.let { File(it).name }
+                        ?: "N/A"
+                )
+            } else {
+                Text(
+                    text = "No sample has been written yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SecondaryText
+                )
+            }
+        }
+
+        AppSectionCard(title = "Preflight Checks") {
+            CollapsibleCardHeader(
+                title = "Preflight Checks",
+                expanded = preflightExpanded,
+                summary = "Blocks: $blockCount, Warnings: $warnCount",
+                onToggle = onTogglePreflight
+            )
+
+            AnimatedVisibility(visible = preflightExpanded) {
+                Column {
+                    SpacerLine()
+                    preflightChecks.forEach { item ->
+                        val color = when (item.level) {
+                            CheckLevel.PASS -> AccentBlue
+                            CheckLevel.WARN -> MaterialTheme.colorScheme.tertiary
+                            CheckLevel.BLOCK -> MaterialTheme.colorScheme.error
+                        }
+                        Text(
+                            text = "${item.level.label} ${item.title}: ${item.detail}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = color
+                        )
+                        SpacerLine()
+                    }
+
+                    OutlinedButton(
+                        onClick = onRefreshPreflight,
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, AccentBlue),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+                    ) {
+                        Text("Refresh Checks")
+                    }
+                }
+            }
+        }
+
+        AppSectionCard(title = "Device Status") {
+            CollapsibleCardHeader(
+                title = "Device Status",
+                expanded = deviceStatusExpanded,
+                summary = deviceStatusSummary,
+                onToggle = onToggleDeviceStatus
+            )
+
+            AnimatedVisibility(visible = deviceStatusExpanded) {
+                Column {
+                    SpacerLine()
+                    DetailRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                    DetailRow(
+                        "Notification Permission",
+                        if (notificationPermissionGranted) "Granted" else "Not granted"
+                    )
+                    DetailRow(
+                        "Modify System Settings",
+                        if (writeSettingsGranted) "Granted" else "Not granted"
+                    )
+                    DetailRow("Results Directory", SharedResultsStore.RESULTS_DIRECTORY_LABEL)
+                    if (currentFilePath.isNotBlank()) {
+                        DetailRow("Current File Path", currentFilePath)
+                    } else if (lastFilePath.isNotBlank()) {
+                        DetailRow("Last File Path", lastFilePath)
+                    }
+                }
+            }
+        }
+
+        AppSectionCard(
+            title = "Event Marker",
+            subtitle = "Use markers to annotate key moments during a running experiment."
+        ) {
+            OutlinedTextField(
+                value = eventMarkerInput,
+                onValueChange = onEventMarkerChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Marker Text") },
+                placeholder = { Text("Example: phase1_start") },
+                colors = appOutlinedTextFieldColors()
+            )
+            SpacerLine()
+            Button(
+                onClick = onSubmitMarker,
+                enabled = isCollecting,
+                modifier = Modifier.fillMaxWidth(),
+                colors = primaryButtonColors()
+            ) {
+                Text("Add Marker")
+            }
+            SpacerLine()
+            Text(
+                text = "Keep the app in the foreground during formal experiments so monitoring remains visible.",
+                style = MaterialTheme.typography.bodySmall,
+                color = SecondaryText
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConfigurationPage(
+    isCollecting: Boolean,
+    selectedExperimentMode: ExperimentMode,
+    onExperimentModeSelected: (ExperimentMode) -> Unit,
+    intervalMs: Long,
+    onIntervalSelected: (Long) -> Unit,
+    noteInput: String,
+    onNoteChange: (String) -> Unit,
+    brightnessTargetInput: String,
+    onBrightnessTargetChange: (String) -> Unit,
+    enforceBrightnessEnabled: Boolean,
+    onEnforceBrightnessChanged: (Boolean) -> Unit,
+    keepScreenOnEnabled: Boolean,
+    onKeepScreenOnChanged: (Boolean) -> Unit,
+    selectedCpuStressLevel: CpuStressLevel,
+    onCpuStressLevelSelected: (CpuStressLevel) -> Unit,
+    selectedNetworkScenario: NetworkScenarioUi,
+    onNetworkScenarioSelected: (NetworkScenarioUi) -> Unit,
+    selectedNetworkConnectionMode: NetworkConnectionModeUi,
+    onNetworkConnectionModeSelected: (NetworkConnectionModeUi) -> Unit,
+    networkRetryEnabled: Boolean,
+    onNetworkRetryEnabledChanged: (Boolean) -> Unit,
+    networkMaxRetryCountInput: String,
+    onNetworkMaxRetryCountChange: (String) -> Unit,
+    networkDownloadUrlInput: String,
+    onNetworkDownloadUrlChange: (String) -> Unit,
+    networkUploadUrlInput: String,
+    onNetworkUploadUrlChange: (String) -> Unit,
+    networkBurstUrlInput: String,
+    onNetworkBurstUrlChange: (String) -> Unit,
+    networkUploadChunkKbInput: String,
+    onNetworkUploadChunkKbChange: (String) -> Unit,
+    networkBurstIntervalMsInput: String,
+    onNetworkBurstIntervalMsChange: (String) -> Unit,
+    configurationSummary: String
+) {
+    val scrollState = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        AppSectionCard(
+            title = "Experiment Mode",
+            subtitle = "Select one experiment path. CPU and Network modes are intentionally exclusive."
+        ) {
+            ExperimentMode.entries.forEach { mode ->
+                OptionRow(
+                    title = mode.label,
+                    description = mode.description,
+                    selected = selectedExperimentMode == mode,
+                    enabled = !isCollecting,
+                    onClick = { onExperimentModeSelected(mode) }
+                )
+                SpacerLine()
+            }
+        }
+
+        AppSectionCard(title = "Common Collection Settings") {
+            Text(
+                text = "Sampling Interval",
+                style = MaterialTheme.typography.titleSmall,
+                color = AccentBlue
+            )
+            SpacerLine()
+            listOf(500L, 1000L, 2000L).forEach { option ->
+                OptionRow(
+                    title = "$option ms",
+                    selected = intervalMs == option,
+                    enabled = !isCollecting,
+                    onClick = { onIntervalSelected(option) }
+                )
+                SpacerLine()
+            }
+
+            OutlinedTextField(
+                value = noteInput,
+                onValueChange = onNoteChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Experiment Note") },
+                placeholder = { Text("Example: 5C_run01") },
+                enabled = !isCollecting,
+                colors = appOutlinedTextFieldColors()
+            )
+            SpacerLine()
+            OutlinedTextField(
+                value = brightnessTargetInput,
+                onValueChange = onBrightnessTargetChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Target Brightness (0-255)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                enabled = !isCollecting,
+                colors = appOutlinedTextFieldColors()
+            )
+            SpacerLine()
+            ToggleRow(
+                label = "Enforce Brightness",
+                checked = enforceBrightnessEnabled,
+                enabled = !isCollecting,
+                onCheckedChange = onEnforceBrightnessChanged
+            )
+            SpacerLine()
+            ToggleRow(
+                label = "Keep Screen Awake During Collection",
+                checked = keepScreenOnEnabled,
+                enabled = !isCollecting,
+                onCheckedChange = onKeepScreenOnChanged
+            )
+        }
+
+        AnimatedVisibility(visible = selectedExperimentMode == ExperimentMode.CPU_HIGH_POWER) {
+            AppSectionCard(
+                title = "CPU High Power Settings",
+                subtitle = "Pick the CPU stress profile used while battery collection is running."
+            ) {
+                CpuStressLevel.entries.forEach { level ->
+                    OptionRow(
+                        title = level.label,
+                        description = "Threads=${if (level.threadCount == 0) "Auto" else level.threadCount}, Duty=${level.dutyPercent}%",
+                        selected = selectedCpuStressLevel == level,
+                        enabled = !isCollecting,
+                        onClick = { onCpuStressLevelSelected(level) }
+                    )
+                    SpacerLine()
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = selectedExperimentMode == ExperimentMode.NETWORK_POWER) {
+            AppSectionCard(
+                title = "Network Power Settings",
+                subtitle = "Configure the live network workload that will run during battery collection."
+            ) {
+                Text(
+                    text = "Scenario",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = AccentBlue
+                )
+                SpacerLine()
+                NetworkScenarioUi.entries.forEach { scenario ->
+                    OptionRow(
+                        title = scenario.label,
+                        selected = selectedNetworkScenario == scenario,
+                        enabled = !isCollecting,
+                        onClick = { onNetworkScenarioSelected(scenario) }
+                    )
+                    SpacerLine()
+                }
+
+                Text(
+                    text = "Connection Mode",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = AccentBlue
+                )
+                SpacerLine()
+                NetworkConnectionModeUi.entries.forEach { mode ->
+                    OptionRow(
+                        title = mode.label,
+                        description = "Workers: ${mode.concurrency}",
+                        selected = selectedNetworkConnectionMode == mode,
+                        enabled = !isCollecting,
+                        onClick = { onNetworkConnectionModeSelected(mode) }
+                    )
+                    SpacerLine()
+                }
+
+                OutlinedTextField(
+                    value = networkDownloadUrlInput,
+                    onValueChange = onNetworkDownloadUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Download URL") },
+                    enabled = !isCollecting,
+                    colors = appOutlinedTextFieldColors()
+                )
+                SpacerLine()
+                OutlinedTextField(
+                    value = networkUploadUrlInput,
+                    onValueChange = onNetworkUploadUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Upload URL") },
+                    enabled = !isCollecting,
+                    colors = appOutlinedTextFieldColors()
+                )
+                SpacerLine()
+                OutlinedTextField(
+                    value = networkBurstUrlInput,
+                    onValueChange = onNetworkBurstUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Burst URL") },
+                    enabled = !isCollecting,
+                    colors = appOutlinedTextFieldColors()
+                )
+                SpacerLine()
+                ToggleRow(
+                    label = "Enable Retry",
+                    checked = networkRetryEnabled,
+                    enabled = !isCollecting,
+                    onCheckedChange = onNetworkRetryEnabledChanged
+                )
+                SpacerLine()
+                OutlinedTextField(
+                    value = networkMaxRetryCountInput,
+                    onValueChange = onNetworkMaxRetryCountChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Max Retry Count") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    enabled = !isCollecting,
+                    colors = appOutlinedTextFieldColors()
+                )
+                SpacerLine()
+                OutlinedTextField(
+                    value = networkUploadChunkKbInput,
+                    onValueChange = onNetworkUploadChunkKbChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Upload Chunk KB") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    enabled = !isCollecting,
+                    colors = appOutlinedTextFieldColors()
+                )
+                SpacerLine()
+                OutlinedTextField(
+                    value = networkBurstIntervalMsInput,
+                    onValueChange = onNetworkBurstIntervalMsChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Burst Interval ms") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    enabled = !isCollecting,
+                    colors = appOutlinedTextFieldColors()
+                )
+            }
+        }
+
+        AppSectionCard(
+            title = "Configuration Summary",
+            subtitle = "Review the currently selected setup before moving back to Monitor."
+        ) {
+            Text(
+                text = configurationSummary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = PrimaryText
+            )
+        }
+    }
+}
+
+@Composable
+private fun AppSectionCard(
+    title: String,
+    subtitle: String? = null,
+    content: @Composable () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = CardBackground)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = AccentBlue,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryText,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            Column(modifier = Modifier.padding(top = 12.dp)) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomPagerSwitcher(
+    currentPage: Int,
+    onPageSelected: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(AppBackground)
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        PagerButton(
+            label = "Monitor",
+            selected = currentPage == 0,
+            onClick = { onPageSelected(0) },
+            modifier = Modifier.fillMaxWidth(0.48f)
+        )
+        PagerButton(
+            label = "Configuration",
+            selected = currentPage == 1,
+            onClick = { onPageSelected(1) },
+            modifier = Modifier.fillMaxWidth(0.48f)
+        )
+    }
+}
+
+@Composable
+private fun PagerButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            modifier = modifier,
+            colors = primaryButtonColors()
+        ) {
+            Text(label)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+            border = BorderStroke(1.dp, AccentBlue),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentBlue)
+        ) {
+            Text(label)
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(
+    title: String,
+    description: String? = null,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) AccentBlueSoft else CardBackground)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+            enabled = enabled,
+            colors = RadioButtonDefaults.colors(
+                selectedColor = AccentBlue,
+                unselectedColor = SecondaryText
+            )
+        )
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = PrimaryText,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            )
+            if (!description.isNullOrBlank()) {
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryText
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = PrimaryText
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = CardBackground,
+                checkedTrackColor = AccentBlue,
+                checkedBorderColor = AccentBlue,
+                uncheckedThumbColor = CardBackground,
+                uncheckedTrackColor = AccentBlueSoft,
+                uncheckedBorderColor = BorderColor
+            )
+        )
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = SecondaryText
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = PrimaryText
+        )
+    }
+    SpacerLine()
 }
 
 @Composable
@@ -1086,19 +1545,55 @@ private fun CollapsibleCardHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = onToggle) {
-                Text(if (expanded) "收起" else "展开")
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = AccentBlue,
+                fontWeight = FontWeight.SemiBold
+            )
+            TextButton(
+                onClick = onToggle,
+                colors = ButtonDefaults.textButtonColors(contentColor = AccentBlue)
+            ) {
+                Text(if (expanded) "Collapse" else "Expand")
             }
         }
-        Text(text = summary, style = MaterialTheme.typography.bodySmall)
+        Text(
+            text = summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = SecondaryText
+        )
     }
 }
 
+@Composable
+private fun SpacerLine(height: Int = 8) {
+    androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(height.dp))
+}
+
+@Composable
+private fun appOutlinedTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = AccentBlue,
+    focusedLabelColor = AccentBlue,
+    cursorColor = AccentBlue,
+    unfocusedBorderColor = BorderColor,
+    unfocusedLabelColor = SecondaryText
+)
+
+@Composable
+private fun primaryButtonColors() = ButtonDefaults.buttonColors(
+    containerColor = AccentBlue,
+    contentColor = CardBackground
+)
+
+private fun formatSnapshotTimestamp(timeMillis: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timeMillis))
+}
+
 private enum class CheckLevel(val label: String) {
-    PASS("[通过]"),
-    WARN("[警告]"),
-    BLOCK("[阻止]")
+    PASS("[PASS]"),
+    WARN("[WARN]"),
+    BLOCK("[BLOCK]")
 }
 
 private data class PreflightCheckItem(
