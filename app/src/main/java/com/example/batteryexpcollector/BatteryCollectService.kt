@@ -88,6 +88,8 @@ class BatteryCollectService : Service() {
     private var lastTxBytes: Long? = null
     private var lastRxBytes: Long? = null
     private var lastTrafficTimestamp: Long? = null
+    private var lastNetworkTaskDownloadBytes: Long? = null
+    private var lastNetworkTaskUploadBytes: Long? = null
 
     private var batteryLevel: Int? = null
     private var batteryVoltageMv: Int? = null
@@ -281,6 +283,8 @@ class BatteryCollectService : Service() {
         sampleCount = 0L
         screenOffObserved = false
         chargingObserved = false
+        lastNetworkTaskDownloadBytes = null
+        lastNetworkTaskUploadBytes = null
 
         ensureBatteryReceiverRegistered()
         initializeTrafficBaseline()
@@ -335,6 +339,8 @@ class BatteryCollectService : Service() {
         sampleCount = countExistingDataRows(currentCsvUri!!)
         screenOffObserved = false
         chargingObserved = false
+        lastNetworkTaskDownloadBytes = null
+        lastNetworkTaskUploadBytes = null
 
         ensureBatteryReceiverRegistered()
         initializeTrafficBaseline()
@@ -399,6 +405,8 @@ class BatteryCollectService : Service() {
         currentCsvUri = null
         currentCsvDisplayName = ""
         currentCsvLogicalPath = ""
+        lastNetworkTaskDownloadBytes = null
+        lastNetworkTaskUploadBytes = null
 
         if (clearSession) {
             CollectionPrefs.clearActiveSession(this, csvLogicalPath)
@@ -512,6 +520,16 @@ class BatteryCollectService : Service() {
         val cpuFreqSnapshot = readCpuFreqSnapshot()
         val networkSnapshot = readNetworkSnapshot(now)
         val networkTaskStats = networkLoadController.snapshot()
+        val networkTaskDownloadBytesDelta = calculateNetworkTaskBytesDelta(
+            currentTotal = networkTaskStats.totalDownloadBytes,
+            previousTotal = lastNetworkTaskDownloadBytes
+        )
+        val networkTaskUploadBytesDelta = calculateNetworkTaskBytesDelta(
+            currentTotal = networkTaskStats.totalUploadBytes,
+            previousTotal = lastNetworkTaskUploadBytes
+        )
+        lastNetworkTaskDownloadBytes = networkTaskStats.totalDownloadBytes
+        lastNetworkTaskUploadBytes = networkTaskStats.totalUploadBytes
 
         val eventMarker = pendingEventMarker
         pendingEventMarker = null
@@ -563,6 +581,8 @@ class BatteryCollectService : Service() {
             csvField(networkTaskStats.activeWorkers),
             csvField(networkTaskStats.totalDownloadBytes),
             csvField(networkTaskStats.totalUploadBytes),
+            csvField(networkTaskDownloadBytesDelta),
+            csvField(networkTaskUploadBytesDelta),
             csvField(networkTaskStats.successCount),
             csvField(networkTaskStats.failureCount),
             csvField(networkTaskStats.retryCount),
@@ -844,10 +864,19 @@ class BatteryCollectService : Service() {
                     "HighPowerEnabled,CpuStressThreads,CpuStressDutyPercent," +
                     "NetworkLoadEnabled,NetworkScenario,NetworkConnectionMode,NetworkConcurrency," +
                     "NetTask_ActiveWorkers,NetTask_TotalDownloadBytes,NetTask_TotalUploadBytes," +
+                    "NetTask_DownloadBytesDelta,NetTask_UploadBytesDelta," +
                     "NetTask_SuccessCount,NetTask_FailureCount,NetTask_RetryCount," +
                     "NetTask_OperationCount,NetTask_AvgOperationDurationMs," +
                     "ExperimentNote,EventMarker"
         )
+    }
+
+    private fun calculateNetworkTaskBytesDelta(
+        currentTotal: Long,
+        previousTotal: Long?
+    ): Long {
+        if (previousTotal == null) return currentTotal.coerceAtLeast(0L)
+        return (currentTotal - previousTotal).coerceAtLeast(0L)
     }
 
     private fun writeLine(line: String) {

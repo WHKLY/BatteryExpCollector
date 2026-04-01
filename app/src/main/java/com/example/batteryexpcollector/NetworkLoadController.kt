@@ -107,9 +107,7 @@ class NetworkLoadController {
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 val startMs = System.currentTimeMillis()
                 try {
-                    val result = executeOperationWithRetry(config, uploadPayload)
-                    totalDownloadBytes.addAndGet(result.downloadBytes)
-                    totalUploadBytes.addAndGet(result.uploadBytes)
+                    executeOperationWithRetry(config, uploadPayload)
                     successCount.incrementAndGet()
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
@@ -142,7 +140,7 @@ class NetworkLoadController {
     private fun executeOperationWithRetry(
         config: CollectionConfig,
         uploadPayload: ByteArray
-    ): TransferResult {
+    ) {
         val maxAttempts = if (config.networkRetryEnabled) {
             config.networkMaxRetryCount.coerceAtLeast(0) + 1
         } else {
@@ -153,7 +151,7 @@ class NetworkLoadController {
 
         repeat(maxAttempts) { attempt ->
             try {
-                return when (config.networkScenario) {
+                when (config.networkScenario) {
                     NETWORK_SCENARIO_DOWNLOAD_LOOP ->
                         executeDownload(config.networkDownloadUrl)
 
@@ -165,6 +163,7 @@ class NetworkLoadController {
 
                     else -> throw IllegalArgumentException("Unsupported network scenario")
                 }
+                return
             } catch (e: InterruptedException) {
                 throw e
             } catch (e: Exception) {
@@ -178,54 +177,55 @@ class NetworkLoadController {
         throw lastError ?: IllegalStateException("Network operation failed without exception")
     }
 
-    private fun executeDownload(urlString: String): TransferResult {
+    private fun executeDownload(urlString: String) {
         val connection = openConnection(urlString, method = "GET", doOutput = false)
-        return connection.useConnection {
+        connection.useConnection {
             val responseCode = connection.responseCode
             ensureSuccess(responseCode)
 
             BufferedInputStream(connection.inputStream).use { stream ->
                 val buffer = ByteArray(BUFFER_SIZE)
-                var total = 0L
                 while (running.get() && !Thread.currentThread().isInterrupted) {
                     val read = stream.read(buffer)
                     if (read < 0) break
-                    total += read.toLong()
+                    totalDownloadBytes.addAndGet(read.toLong())
                 }
-                TransferResult(downloadBytes = total)
             }
         }
     }
 
-    private fun executeUpload(urlString: String, payload: ByteArray): TransferResult {
+    private fun executeUpload(urlString: String, payload: ByteArray) {
         val connection = openConnection(urlString, method = "POST", doOutput = true)
-        return connection.useConnection {
+        connection.useConnection {
             connection.setFixedLengthStreamingMode(payload.size)
             connection.setRequestProperty("Content-Type", "application/octet-stream")
 
             BufferedOutputStream(connection.outputStream).use { stream ->
-                stream.write(payload)
+                var offset = 0
+                while (offset < payload.size && running.get() && !Thread.currentThread().isInterrupted) {
+                    val chunkSize = minOf(BUFFER_SIZE, payload.size - offset)
+                    stream.write(payload, offset, chunkSize)
+                    stream.flush()
+                    totalUploadBytes.addAndGet(chunkSize.toLong())
+                    offset += chunkSize
+                }
                 stream.flush()
             }
 
             val responseCode = connection.responseCode
             ensureSuccess(responseCode)
 
-            val responseBytes = readResponseBodyBytes(connection)
-            TransferResult(
-                downloadBytes = responseBytes,
-                uploadBytes = payload.size.toLong()
-            )
+            consumeResponseBody(connection)
         }
     }
 
-    private fun executeSmallRequest(urlString: String): TransferResult {
+    private fun executeSmallRequest(urlString: String) {
         val connection = openConnection(urlString, method = "GET", doOutput = false)
-        return connection.useConnection {
+        connection.useConnection {
             val responseCode = connection.responseCode
             ensureSuccess(responseCode)
 
-            TransferResult(downloadBytes = readResponseBodyBytes(connection))
+            consumeResponseBody(connection)
         }
     }
 
@@ -246,22 +246,20 @@ class NetworkLoadController {
         return connection
     }
 
-    private fun readResponseBodyBytes(connection: HttpURLConnection): Long {
+    private fun consumeResponseBody(connection: HttpURLConnection) {
         val inputStream = try {
             connection.inputStream
         } catch (_: IOException) {
             connection.errorStream
-        } ?: return 0L
+        } ?: return
 
         inputStream.use { stream ->
             val buffer = ByteArray(BUFFER_SIZE)
-            var total = 0L
             while (running.get() && !Thread.currentThread().isInterrupted) {
                 val read = stream.read(buffer)
                 if (read < 0) break
-                total += read.toLong()
+                totalDownloadBytes.addAndGet(read.toLong())
             }
-            return total
         }
     }
 
@@ -279,11 +277,6 @@ class NetworkLoadController {
             disconnect()
         }
     }
-
-    private data class TransferResult(
-        val downloadBytes: Long = 0L,
-        val uploadBytes: Long = 0L
-    )
 
     companion object {
         private const val TAG = "NetworkLoadController"
